@@ -6,7 +6,7 @@ app = FastAPI()
 
 def get_signal():
     try:
-        data = yf.download("EURUSD=X", period="1d", interval="5m")
+        data = yf.download("XAUUSD=X", period="1d", interval="5m")
 
         # ✅ Check if empty BEFORE using it
         if data is None or data.empty or len(data) < 20:
