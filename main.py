@@ -5,7 +5,7 @@ import pandas as pd
 app = FastAPI()
 
 def get_signal():
-    data = yf.download("EURUSD=X", period="1d", interval="5m")
+    data = yf.download("XAUUSD=X", period="1d", interval="5m")
 
     data['EMA_10'] = data['Close'].ewm(span=10).mean()
     data['EMA_20'] = data['Close'].ewm(span=20).mean()
