@@ -1,25 +1,57 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import requests
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+API_KEY = "PUT_YOUR_API_KEY_HERE"
+
+@app.get("/")
+def home():
+    return {"message": "Trading API running"}
+
+def get_price(symbol="EUR/USD"):
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=30&apikey={API_KEY}"
+
+    r = requests.get(url).json()
+
+    if "values" not in r:
+        return None
+
+    closes = [float(x["close"]) for x in r["values"]]
+    return closes
+
 def get_signal():
     try:
-        import yfinance as yf
+        closes = get_price("EUR/USD")
 
-        data = yf.download("GC=F", period="1d", interval="5m", progress=False)
+        if not closes or len(closes) < 10:
+            return {"error": "No market data"}
 
-        # Safety check
-        if data is None or data.empty:
-            return {"error": "Market data unavailable"}
+        # Simple EMA logic
+        def ema(data, period):
+            k = 2 / (period + 1)
+            ema_values = []
+            ema_values.append(data[0])
 
-        # Indicators
-        data["EMA_10"] = data["Close"].ewm(span=10).mean()
-        data["EMA_20"] = data["Close"].ewm(span=20).mean()
+            for price in data[1:]:
+                ema_values.append(price * k + ema_values[-1] * (1 - k))
 
-        # FORCE single row + single values (IMPORTANT FIX)
-        latest = data.tail(1).iloc[0]
+            return ema_values[-1]
 
-        close = float(latest["Close"])
-        ema10 = float(latest["EMA_10"])
-        ema20 = float(latest["EMA_20"])
+        ema10 = ema(closes, 10)
+        ema20 = ema(closes, 20)
 
-        # Signal logic
+        entry = closes[-1]
+
         if ema10 > ema20:
             signal = "BUY"
         elif ema10 < ema20:
@@ -29,12 +61,14 @@ def get_signal():
 
         return {
             "signal": signal,
-            "entry": close,
-            "stop_loss": close * 0.99,
-            "take_profit": close * 1.02,
-            "ema_10": ema10,
-            "ema_20": ema20
+            "entry": entry,
+            "stop_loss": entry * 0.99,
+            "take_profit": entry * 1.02
         }
 
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/signal")
+def signal():
+    return get_signal()
