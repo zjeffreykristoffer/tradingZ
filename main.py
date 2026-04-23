@@ -21,7 +21,7 @@ def home():
 def get_signal():
     try:
         # Fetch market data
-        data = yf.download("EURUSD=X", period="1d", interval="5m", progress=False)
+        data = yf.download("XAUUSD=X", period="1d", interval="5m", progress=False)
 
         # ✅ Safety checks (VERY IMPORTANT)
         if data is None or data.empty or len(data) < 20:
