@@ -12,7 +12,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = "PUT_YOUR_API_KEY_HERE"
+API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 @app.get("/")
 def home():
