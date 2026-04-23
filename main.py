@@ -4,7 +4,9 @@ import requests
 
 app = FastAPI()
 
-# Allow frontend access
+# ======================
+# CORS (frontend access)
+# ======================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,39 +15,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# =========================
-# 🔑 PUT YOUR API KEY HERE
-# =========================
-API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
+# ======================
+# API KEY
+# ======================
+API_KEY = "YOUR_TWELVEDATA_API_KEY"
 
-# =========================
-# MARKET DATA FUNCTION
-# =========================
+# ======================
+# GET MARKET DATA
+# ======================
 def get_prices(symbol: str):
-    url = (
-        f"https://api.twelvedata.com/time_series"
-        f"?symbol={symbol}&interval=5min&outputsize=30&apikey={API_KEY}"
-    )
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&apikey={API_KEY}"
 
     try:
-        response = requests.get(url, timeout=10).json()
+        r = requests.get(url, timeout=10).json()
 
-        if "values" not in response:
+        if "values" not in r:
             return None
 
-        # Convert to float list (closing prices)
-        closes = [float(item["close"]) for item in response["values"]]
-        closes.reverse()  # oldest → newest
+        closes = [float(x["close"]) for x in r["values"]]
+        highs = [float(x["high"]) for x in r["values"]]
+        lows = [float(x["low"]) for x in r["values"]]
 
-        return closes
+        closes.reverse()
+        highs.reverse()
+        lows.reverse()
 
-    except Exception:
+        return closes, highs, lows
+
+    except:
         return None
 
 
-# =========================
-# SIMPLE EMA FUNCTION
-# =========================
+# ======================
+# EMA FUNCTION
+# ======================
 def ema(data, period):
     k = 2 / (period + 1)
     values = [data[0]]
@@ -56,56 +59,93 @@ def ema(data, period):
     return values[-1]
 
 
-# =========================
+# ======================
+# SIMPLE ATR (volatility)
+# ======================
+def atr(high, low, close, period=14):
+    trs = []
+
+    for i in range(1, len(close)):
+        tr = max(
+            high[i] - low[i],
+            abs(high[i] - close[i - 1]),
+            abs(low[i] - close[i - 1])
+        )
+        trs.append(tr)
+
+    return sum(trs[-period:]) / period
+
+
+# ======================
 # SIGNAL ENGINE
-# =========================
+# ======================
 def generate_signal(symbol: str):
 
-    prices = get_prices(symbol)
+    data = get_prices(symbol)
 
-    if not prices or len(prices) < 20:
+    if not data:
         return {"error": "No market data available"}
 
-    ema10 = ema(prices[-20:], 10)
-    ema20 = ema(prices[-20:], 20)
+    closes, highs, lows = data
 
-    entry = prices[-1]
+    if len(closes) < 20:
+        return {"error": "Not enough data"}
 
-    # Signal logic
+    ema10 = ema(closes[-20:], 10)
+    ema20 = ema(closes[-20:], 20)
+
+    entry = closes[-1]
+
+    # ======================
+    # SIGNAL LOGIC
+    # ======================
+    if ema10 > ema20:
+        signal = "BUY"
+    elif ema10 < ema20:
+        signal = "SELL"
+    else:
+        signal = "HOLD"
+
+    # ======================
+    # ATR-BASED RISK
+    # ======================
+    volatility = atr(highs, lows, closes)
+
     if signal == "BUY":
-    stop_loss = entry * 0.99
-    take_profit = entry * 1.02
+        stop_loss = entry - (volatility * 1.5)
+        take_profit = entry + (volatility * 2)
 
-elif signal == "SELL":
-    stop_loss = entry * 1.01
-    take_profit = entry * 0.98
+    elif signal == "SELL":
+        stop_loss = entry + (volatility * 1.5)
+        take_profit = entry - (volatility * 2)
 
-else:
-    stop_loss = None
-    take_profit = None
+    else:
+        stop_loss = None
+        take_profit = None
 
     return {
-    "symbol": symbol,
-    "signal": signal,
-    "entry": entry,
-    "stop_loss": stop_loss,
-    "take_profit": take_profit,
-    "ema_10": ema10,
-    "ema_20": ema20
-}
+        "symbol": symbol,
+        "signal": signal,
+        "entry": entry,
+        "stop_loss": round(stop_loss, 5) if stop_loss else None,
+        "take_profit": round(take_profit, 5) if take_profit else None,
+        "ema_10": round(ema10, 5),
+        "ema_20": round(ema20, 5),
+        "atr": round(volatility, 5)
+    }
 
 
-# =========================
+# ======================
 # ROUTES
-# =========================
+# ======================
 @app.get("/")
 def home():
-    return {"message": "Trading API is running"}
+    return {"message": "Trading API running"}
 
 @app.get("/signal/forex")
-def forex_signal():
+def forex():
     return generate_signal("EUR/USD")
 
 @app.get("/signal/gold")
-def gold_signal():
+def gold():
     return generate_signal("XAU/USD")
