@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Trading Signals</title>
+</head>
+<body>
+    <h1>Forex Signal</h1>
+
+    <p id="signal"></p>
+    <p id="entry"></p>
+    <p id="sl"></p>
+    <p id="tp"></p>
+
+    <script>
+        async function loadSignal() {
+            const res = await fetch("http://127.0.0.1:8000/signal");
+            const data = await res.json();
+
+            document.getElementById("signal").innerText = "Signal: " + data.signal;
+            document.getElementById("entry").innerText = "Entry: " + data.entry;
+            document.getElementById("sl").innerText = "Stop Loss: " + data.stop_loss;
+            document.getElementById("tp").innerText = "Take Profit: " + data.take_profit;
+        }
+
+        loadSignal();
+    </script>
+</body>
+</html>
