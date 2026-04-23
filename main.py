@@ -5,30 +5,35 @@ import pandas as pd
 app = FastAPI()
 
 def get_signal():
-    data = yf.download("XAUUSD=X", period="1d", interval="5m")
+    try:
+        data = yf.download("EURUSD=X", period="1d", interval="5m")
 
-    data['EMA_10'] = data['Close'].ewm(span=10).mean()
-    data['EMA_20'] = data['Close'].ewm(span=20).mean()
+        # ✅ Check if empty BEFORE using it
+        if data is None or data.empty or len(data) < 20:
+            return {"error": "Market data unavailable"}
 
-    latest = data.iloc[-1]
+        data['EMA_10'] = data['Close'].ewm(span=10).mean()
+        data['EMA_20'] = data['Close'].ewm(span=20).mean()
 
-    if latest['EMA_10'] > latest['EMA_20']:
-        signal = "BUY"
-    elif latest['EMA_10'] < latest['EMA_20']:
-        signal = "SELL"
-    else:
+        latest = data.iloc[-1]
+
         signal = "HOLD"
+        if latest['EMA_10'] > latest['EMA_20']:
+            signal = "BUY"
+        elif latest['EMA_10'] < latest['EMA_20']:
+            signal = "SELL"
 
-    entry = float(latest['Close'])
-    stop_loss = entry * 0.99
-    take_profit = entry * 1.02
+        entry = float(latest['Close'])
 
-    return {
-        "signal": signal,
-        "entry": entry,
-        "stop_loss": stop_loss,
-        "take_profit": take_profit
-    }
+        return {
+            "signal": signal,
+            "entry": entry,
+            "stop_loss": entry * 0.99,
+            "take_profit": entry * 1.02
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/signal")
 def signal():
