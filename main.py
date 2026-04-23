@@ -18,7 +18,7 @@ app.add_middleware(
 # ======================
 # API KEY
 # ======================
-API_KEY = "YOUR_TWELVEDATA_API_KEY"
+API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 # ======================
 # GET MARKET DATA
