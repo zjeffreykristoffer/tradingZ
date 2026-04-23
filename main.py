@@ -72,22 +72,27 @@ def generate_signal(symbol: str):
     entry = prices[-1]
 
     # Signal logic
-    if ema10 > ema20:
-        signal = "BUY"
-    elif ema10 < ema20:
-        signal = "SELL"
-    else:
-        signal = "HOLD"
+    if signal == "BUY":
+    stop_loss = entry * 0.99
+    take_profit = entry * 1.02
+
+elif signal == "SELL":
+    stop_loss = entry * 1.01
+    take_profit = entry * 0.98
+
+else:
+    stop_loss = None
+    take_profit = None
 
     return {
-        "symbol": symbol,
-        "signal": signal,
-        "entry": entry,
-        "stop_loss": round(entry * 0.99, 5),
-        "take_profit": round(entry * 1.02, 5),
-        "ema_10": round(ema10, 5),
-        "ema_20": round(ema20, 5),
-    }
+    "symbol": symbol,
+    "signal": signal,
+    "entry": entry,
+    "stop_loss": stop_loss,
+    "take_profit": take_profit,
+    "ema_10": ema10,
+    "ema_20": ema20
+}
 
 
 # =========================
