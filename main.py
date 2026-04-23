@@ -17,11 +17,12 @@ def get_signal():
 
         latest = data.iloc[-1]
 
-        signal = "HOLD"
-        if latest['EMA_10'] > latest['EMA_20']:
-            signal = "BUY"
-        elif latest['EMA_10'] < latest['EMA_20']:
-            signal = "SELL"
+if latest['EMA_10'] > latest['EMA_20']:
+    signal = "BUY"
+elif latest['EMA_10'] < latest['EMA_20']:
+    signal = "SELL"
+else:
+    signal = "HOLD"
 
         entry = float(latest['Close'])
 
