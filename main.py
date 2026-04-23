@@ -4,6 +4,7 @@ import requests
 
 app = FastAPI()
 
+# Allow frontend access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -12,63 +13,94 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
+# =========================
+# 🔑 PUT YOUR API KEY HERE
+# =========================
+API_KEY = "YOUR_TWELVEDATA_API_KEY"
 
-@app.get("/")
-def home():
-    return {"message": "Trading API running"}
+# =========================
+# MARKET DATA FUNCTION
+# =========================
+def get_prices(symbol: str):
+    url = (
+        f"https://api.twelvedata.com/time_series"
+        f"?symbol={symbol}&interval=5min&outputsize=30&apikey={API_KEY}"
+    )
 
-def get_price(symbol="EUR/USD"):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=30&apikey={API_KEY}"
+    try:
+        response = requests.get(url, timeout=10).json()
 
-    r = requests.get(url).json()
+        if "values" not in response:
+            return None
 
-    if "values" not in r:
+        # Convert to float list (closing prices)
+        closes = [float(item["close"]) for item in response["values"]]
+        closes.reverse()  # oldest → newest
+
+        return closes
+
+    except Exception:
         return None
 
-    closes = [float(x["close"]) for x in r["values"]]
-    return closes
 
-def get_signal():
-    try:
-        closes = get_price("EUR/USD")
+# =========================
+# SIMPLE EMA FUNCTION
+# =========================
+def ema(data, period):
+    k = 2 / (period + 1)
+    values = [data[0]]
 
-        if not closes or len(closes) < 10:
-            return {"error": "No market data"}
+    for price in data[1:]:
+        values.append(price * k + values[-1] * (1 - k))
 
-        # Simple EMA logic
-        def ema(data, period):
-            k = 2 / (period + 1)
-            ema_values = []
-            ema_values.append(data[0])
+    return values[-1]
 
-            for price in data[1:]:
-                ema_values.append(price * k + ema_values[-1] * (1 - k))
 
-            return ema_values[-1]
+# =========================
+# SIGNAL ENGINE
+# =========================
+def generate_signal(symbol: str):
 
-        ema10 = ema(closes, 10)
-        ema20 = ema(closes, 20)
+    prices = get_prices(symbol)
 
-        entry = closes[-1]
+    if not prices or len(prices) < 20:
+        return {"error": "No market data available"}
 
-        if ema10 > ema20:
-            signal = "BUY"
-        elif ema10 < ema20:
-            signal = "SELL"
-        else:
-            signal = "HOLD"
+    ema10 = ema(prices[-20:], 10)
+    ema20 = ema(prices[-20:], 20)
 
-        return {
-            "signal": signal,
-            "entry": entry,
-            "stop_loss": entry * 0.99,
-            "take_profit": entry * 1.02
-        }
+    entry = prices[-1]
 
-    except Exception as e:
-        return {"error": str(e)}
+    # Signal logic
+    if ema10 > ema20:
+        signal = "BUY"
+    elif ema10 < ema20:
+        signal = "SELL"
+    else:
+        signal = "HOLD"
 
-@app.get("/signal")
-def signal():
-    return get_signal()
+    return {
+        "symbol": symbol,
+        "signal": signal,
+        "entry": entry,
+        "stop_loss": round(entry * 0.99, 5),
+        "take_profit": round(entry * 1.02, 5),
+        "ema_10": round(ema10, 5),
+        "ema_20": round(ema20, 5),
+    }
+
+
+# =========================
+# ROUTES
+# =========================
+@app.get("/")
+def home():
+    return {"message": "Trading API is running"}
+
+@app.get("/signal/forex")
+def forex_signal():
+    return generate_signal("EUR/USD")
+
+@app.get("/signal/gold")
+def gold_signal():
+    return generate_signal("XAU/USD")
