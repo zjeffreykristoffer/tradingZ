@@ -47,15 +47,16 @@
 
 const API = "https://tradingz.onrender.com";
 
-function safe(val) {
-    return val ?? "-";
+function safe(v) {
+    return (v === null || v === undefined) ? "-" : v;
 }
 
 function render(data) {
 
-    if (!data) {
-        document.getElementById("dashboard").innerHTML =
-            "<h3 class='nodata'>No data from server</h3>";
+    const container = document.getElementById("dashboard");
+
+    if (!data || typeof data !== "object") {
+        container.innerHTML = "<h3 class='nodata'>No data from server</h3>";
         return;
     }
 
@@ -70,7 +71,14 @@ function render(data) {
 
         const d = data[a.key];
 
-        if (!d) continue;
+        if (!d) {
+            html += `
+            <div class="card">
+                <h2>${a.name}</h2>
+                <h3 class="nodata">No data</h3>
+            </div>`;
+            continue;
+        }
 
         let cls = (d.signal || "").toLowerCase();
 
@@ -89,13 +97,16 @@ function render(data) {
         `;
     }
 
-    document.getElementById("dashboard").innerHTML = html;
+    container.innerHTML = html;
 }
 
 async function load() {
 
     try {
         const res = await fetch(`${API}/dashboard/all`);
+
+        if (!res.ok) throw new Error("HTTP error " + res.status);
+
         const data = await res.json();
 
         console.log("DATA:", data);
@@ -103,6 +114,7 @@ async function load() {
         render(data);
 
     } catch (err) {
+
         console.error("Fetch error:", err);
 
         document.getElementById("dashboard").innerHTML =
@@ -113,7 +125,7 @@ async function load() {
 // initial load
 load();
 
-// refresh every 2 minutes (your new setup)
+// ONLY ONE API CALL EVERY 2 MINUTES
 setInterval(load, 120000);
 
 </script>
