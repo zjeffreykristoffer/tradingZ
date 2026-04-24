@@ -12,11 +12,8 @@
             margin: 0;
         }
 
-        h1 {
-            margin: 20px 0;
-        }
+        h1 { margin: 20px 0; }
 
-        /* SYNC MONITOR */
         #syncBox {
             position: fixed;
             top: 10px;
@@ -25,24 +22,10 @@
             padding: 10px 14px;
             border-radius: 10px;
             font-size: 13px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.4);
-            text-align: left;
-            z-index: 999;
         }
 
-        #syncTimer {
-            color: #22c55e;
-            font-weight: bold;
-        }
+        #syncTimer { color: #22c55e; font-weight: bold; }
 
-        #lastUpdate {
-            display: block;
-            font-size: 11px;
-            color: #94a3b8;
-            margin-top: 4px;
-        }
-
-        /* GRID LAYOUT */
         #dashboard {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -55,31 +38,11 @@
             background: #1e293b;
             padding: 15px;
             border-radius: 12px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.3);
-            min-height: 220px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
         }
 
         td {
-            padding: 8px;
+            padding: 6px;
             border-bottom: 1px solid #334155;
-            font-size: 14px;
-        }
-
-        .buy { color: #22c55e; font-weight: bold; }
-        .sell { color: #ef4444; font-weight: bold; }
-        .hold { color: #facc15; font-weight: bold; }
-        .nodata { color: #94a3b8; }
-
-        @media (max-width: 768px) {
-            #dashboard {
-                grid-template-columns: 1fr;
-            }
         }
     </style>
 </head>
@@ -88,10 +51,10 @@
 
 <h1>📊 Trading Dashboard</h1>
 
-<!-- SYNC MONITOR -->
 <div id="syncBox">
-    ⏱ Next sync: <span id="syncTimer">60</span>s
-    <span id="lastUpdate">Last update: -</span>
+    ⏱ Next sync: <span id="syncTimer">--</span>s
+    <br>
+    🕒 Last: <span id="lastUpdate">-</span>
 </div>
 
 <div id="dashboard">Loading...</div>
@@ -100,107 +63,60 @@
 
 const API = "https://tradingz.onrender.com";
 
-let countdown = 60;
+let nextSyncTime = null;
 let lastUpdateTime = null;
-
-function safe(v) {
-    return (v === null || v === undefined) ? "-" : v;
-}
-
-function updateSyncUI() {
-    document.getElementById("syncTimer").innerText = countdown;
-
-    if (lastUpdateTime) {
-        document.getElementById("lastUpdate").innerText =
-            "Last update: " + lastUpdateTime;
-    }
-}
+let countdown = 0;
 
 function render(data) {
+    const el = document.getElementById("dashboard");
 
-    const container = document.getElementById("dashboard");
+    const assets = ["EURUSD","GBPUSD","USDCAD","GOLD"];
 
-    if (!data) {
-        container.innerHTML = "<h3 class='nodata'>No data from server</h3>";
-        return;
-    }
+    el.innerHTML = assets.map(a => {
+        const d = data[a];
+        if (!d) return `<div class="card">No data</div>`;
 
-    const assets = [
-        { name: "EUR/USD", key: "EURUSD" },
-        { name: "GBP/USD", key: "GBPUSD" },
-        { name: "USD/CAD", key: "USDCAD" },
-        { name: "GOLD", key: "GOLD" }
-    ];
-
-    let html = "";
-
-    for (let a of assets) {
-
-        const d = data[a.key];
-
-        if (!d) {
-            html += `
-            <div class="card">
-                <h2>${a.name}</h2>
-                <p class="nodata">No data</p>
-            </div>`;
-            continue;
-        }
-
-        let cls = (d.signal || "").toLowerCase();
-
-        html += `
+        return `
         <div class="card">
-            <h2>${a.name}</h2>
-
-            <table>
-                <tr><td>Signal</td><td class="${cls}">${safe(d.signal)}</td></tr>
-                <tr><td>Entry</td><td>${safe(d.entry)}</td></tr>
-                <tr><td>Stop Loss</td><td>${safe(d.stop_loss)}</td></tr>
-                <tr><td>Take Profit</td><td>${safe(d.take_profit)}</td></tr>
-                <tr><td>ATR</td><td>${safe(d.atr)}</td></tr>
-            </table>
-        </div>
-        `;
-    }
-
-    container.innerHTML = html;
+            <h3>${a}</h3>
+            <div>Signal: ${d.signal}</div>
+            <div>Entry: ${d.entry}</div>
+            <div>SL: ${d.stop_loss}</div>
+            <div>TP: ${d.take_profit}</div>
+        </div>`;
+    }).join("");
 }
 
 async function load() {
+    const res = await fetch(`${API}/dashboard/all`);
+    const data = await res.json();
 
-    try {
-        const res = await fetch(`${API}/dashboard/all`);
-        const data = await res.json();
+    render(data);
 
-        console.log("DATA:", data);
-
-        render(data);
-
-        // reset timer on successful sync
-        countdown = 60;
-        lastUpdateTime = new Date().toLocaleTimeString();
-        updateSyncUI();
-
-    } catch (err) {
-        console.error(err);
-        document.getElementById("dashboard").innerHTML =
-            "<h3 style='color:red'>Backend unavailable</h3>";
+    if (data.meta?.next_sync) {
+        nextSyncTime = new Date(data.meta.next_sync);
     }
+
+    if (data.meta?.last_sync) {
+        lastUpdateTime = new Date(data.meta.last_sync).toLocaleTimeString();
+    }
+
+    updateUI();
 }
 
-// initial load
-load();
+function updateUI() {
+    if (nextSyncTime) {
+        countdown = Math.max(0, Math.floor((nextSyncTime - new Date()) / 1000));
+    }
 
-// main refresh (every 60s)
+    document.getElementById("syncTimer").innerText = countdown;
+    document.getElementById("lastUpdate").innerText = lastUpdateTime || "-";
+}
+
 setInterval(load, 60000);
+setInterval(updateUI, 1000);
 
-// countdown timer (1s tick)
-setInterval(() => {
-    countdown--;
-    if (countdown <= 0) countdown = 60;
-    updateSyncUI();
-}, 1000);
+load();
 
 </script>
 
