@@ -1,122 +1,179 @@
 <!DOCTYPE html>
+
 <html>
 <head>
-    <title>Trading Dashboard</title>
+    <title>AI Trading Dashboard</title>
 
-    <style>
-        body {
-            font-family: Arial;
-            background: #0f172a;
-            color: white;
-            text-align: center;
-            margin: 0;
-        }
+```
+<style>
+    body {
+        font-family: Arial;
+        background: #0f172a;
+        color: white;
+        margin: 0;
+        text-align: center;
+    }
 
-        h1 { margin: 20px 0; }
+    h1 {
+        margin: 20px;
+    }
 
-        #syncBox {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            background: #1e293b;
-            padding: 10px 14px;
-            border-radius: 10px;
-            font-size: 13px;
-        }
+    #dashboard {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+        width: 90%;
+        margin: auto;
+    }
 
-        #syncTimer { color: #22c55e; font-weight: bold; }
+    .card {
+        background: #1e293b;
+        padding: 15px;
+        border-radius: 12px;
+    }
 
+    .signal {
+        font-size: 20px;
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
+
+    .strong-buy { color: #22c55e; }
+    .buy { color: #4ade80; }
+    .weak-buy { color: #facc15; }
+    .sell { color: #f87171; }
+    .strong-sell { color: #ef4444; }
+    .no-trade { color: #94a3b8; }
+
+    .bar {
+        height: 10px;
+        border-radius: 5px;
+        background: #334155;
+        margin: 5px 0;
+    }
+
+    .fill-long {
+        height: 100%;
+        background: #22c55e;
+    }
+
+    .fill-short {
+        height: 100%;
+        background: #ef4444;
+    }
+
+    table {
+        width: 100%;
+        margin-top: 10px;
+        border-collapse: collapse;
+    }
+
+    td {
+        padding: 6px;
+        border-bottom: 1px solid #334155;
+        font-size: 13px;
+    }
+
+    @media (max-width: 768px) {
         #dashboard {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 20px;
-            width: 90%;
-            margin: auto;
+            grid-template-columns: 1fr;
         }
+    }
+</style>
+```
 
-        .card {
-            background: #1e293b;
-            padding: 15px;
-            border-radius: 12px;
-        }
-
-        td {
-            padding: 6px;
-            border-bottom: 1px solid #334155;
-        }
-    </style>
 </head>
 
 <body>
 
-<h1>📊 Trading Dashboard</h1>
-
-<div id="syncBox">
-    ⏱ Next sync: <span id="syncTimer">--</span>s
-    <br>
-    🕒 Last: <span id="lastUpdate">-</span>
-</div>
+<h1>📊 AI Trading Dashboard</h1>
 
 <div id="dashboard">Loading...</div>
 
 <script>
 
-const API = "https://tradingz.onrender.com";
+const API = "https://tradingz.onrender.com"; // CHANGE if needed
 
-let nextSyncTime = null;
-let lastUpdateTime = null;
-let countdown = 0;
+function getSignalClass(signal) {
+    return signal.toLowerCase().replace(" ", "-");
+}
+
+function safe(v) {
+    return (v === null || v === undefined) ? "-" : v;
+}
 
 function render(data) {
-    const el = document.getElementById("dashboard");
 
-    const assets = ["EURUSD","GBPUSD","USDCAD","GOLD"];
+    const assets = [
+        { name: "EUR/USD", key: "EURUSD" },
+        { name: "GBP/USD", key: "GBPUSD" },
+        { name: "USD/CAD", key: "USDCAD" },
+        { name: "GOLD", key: "GOLD" }
+    ];
 
-    el.innerHTML = assets.map(a => {
-        const d = data[a];
-        if (!d) return `<div class="card">No data</div>`;
+    let html = "";
 
-        return `
+    for (let a of assets) {
+
+        const d = data[a.key];
+
+        if (!d) continue;
+
+        const signalClass = getSignalClass(d.signal);
+
+        const longWidth = Math.min(d.long_score, 100);
+        const shortWidth = Math.min(d.short_score, 100);
+
+        html += `
         <div class="card">
-            <h3>${a}</h3>
-            <div>Signal: ${d.signal}</div>
-            <div>Entry: ${d.entry}</div>
-            <div>SL: ${d.stop_loss}</div>
-            <div>TP: ${d.take_profit}</div>
-        </div>`;
-    }).join("");
+
+            <h2>${a.name}</h2>
+
+            <div class="signal ${signalClass}">
+                ${d.signal}
+            </div>
+
+            <!-- SCORE BARS -->
+            <div>LONG SCORE (${d.long_score})</div>
+            <div class="bar">
+                <div class="fill-long" style="width:${longWidth}%"></div>
+            </div>
+
+            <div>SHORT SCORE (${d.short_score})</div>
+            <div class="bar">
+                <div class="fill-short" style="width:${shortWidth}%"></div>
+            </div>
+
+            <table>
+                <tr><td>Entry</td><td>${safe(d.entry)}</td></tr>
+                <tr><td>Stop Loss</td><td>${safe(d.stop_loss)}</td></tr>
+                <tr><td>Take Profit</td><td>${safe(d.take_profit)}</td></tr>
+                <tr><td>RSI</td><td>${safe(d.rsi)}</td></tr>
+                <tr><td>ATR</td><td>${safe(d.atr)}</td></tr>
+                <tr><td>EMA50</td><td>${safe(d.ema50)}</td></tr>
+                <tr><td>EMA200</td><td>${safe(d.ema200)}</td></tr>
+            </table>
+
+        </div>
+        `;
+    }
+
+    document.getElementById("dashboard").innerHTML = html;
 }
 
 async function load() {
-    const res = await fetch(`${API}/dashboard/all`);
-    const data = await res.json();
-
-    render(data);
-
-    if (data.meta?.next_sync) {
-        nextSyncTime = new Date(data.meta.next_sync);
+    try {
+        const res = await fetch(`${API}/dashboard/all`);
+        const data = await res.json();
+        render(data);
+    } catch (e) {
+        document.getElementById("dashboard").innerHTML =
+            "<h3 style='color:red'>Backend unavailable</h3>";
     }
-
-    if (data.meta?.last_sync) {
-        lastUpdateTime = new Date(data.meta.last_sync).toLocaleTimeString();
-    }
-
-    updateUI();
 }
-
-function updateUI() {
-    if (nextSyncTime) {
-        countdown = Math.max(0, Math.floor((nextSyncTime - new Date()) / 1000));
-    }
-
-    document.getElementById("syncTimer").innerText = countdown;
-    document.getElementById("lastUpdate").innerText = lastUpdateTime || "-";
-}
-
-setInterval(load, 60000);
-setInterval(updateUI, 1000);
 
 load();
+setInterval(load, 120000);
 
 </script>
 
