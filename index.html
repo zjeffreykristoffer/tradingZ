@@ -16,6 +16,32 @@
             margin: 20px 0;
         }
 
+        /* SYNC MONITOR */
+        #syncBox {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #1e293b;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.4);
+            text-align: left;
+            z-index: 999;
+        }
+
+        #syncTimer {
+            color: #22c55e;
+            font-weight: bold;
+        }
+
+        #lastUpdate {
+            display: block;
+            font-size: 11px;
+            color: #94a3b8;
+            margin-top: 4px;
+        }
+
         /* GRID LAYOUT */
         #dashboard {
             display: grid;
@@ -50,7 +76,6 @@
         .hold { color: #facc15; font-weight: bold; }
         .nodata { color: #94a3b8; }
 
-        /* MOBILE RESPONSIVE */
         @media (max-width: 768px) {
             #dashboard {
                 grid-template-columns: 1fr;
@@ -63,14 +88,32 @@
 
 <h1>📊 Trading Dashboard</h1>
 
+<!-- SYNC MONITOR -->
+<div id="syncBox">
+    ⏱ Next sync: <span id="syncTimer">60</span>s
+    <span id="lastUpdate">Last update: -</span>
+</div>
+
 <div id="dashboard">Loading...</div>
 
 <script>
 
 const API = "https://tradingz.onrender.com";
 
+let countdown = 60;
+let lastUpdateTime = null;
+
 function safe(v) {
     return (v === null || v === undefined) ? "-" : v;
+}
+
+function updateSyncUI() {
+    document.getElementById("syncTimer").innerText = countdown;
+
+    if (lastUpdateTime) {
+        document.getElementById("lastUpdate").innerText =
+            "Last update: " + lastUpdateTime;
+    }
 }
 
 function render(data) {
@@ -134,6 +177,11 @@ async function load() {
 
         render(data);
 
+        // reset timer on successful sync
+        countdown = 60;
+        lastUpdateTime = new Date().toLocaleTimeString();
+        updateSyncUI();
+
     } catch (err) {
         console.error(err);
         document.getElementById("dashboard").innerHTML =
@@ -144,8 +192,15 @@ async function load() {
 // initial load
 load();
 
-// 2-minute refresh (your setup)
+// main refresh (every 60s)
 setInterval(load, 60000);
+
+// countdown timer (1s tick)
+setInterval(() => {
+    countdown--;
+    if (countdown <= 0) countdown = 60;
+    updateSyncUI();
+}, 1000);
 
 </script>
 
