@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import requests
 from time import time
+import requests
 
 app = FastAPI()
 
@@ -10,7 +10,7 @@ app = FastAPI()
 # ======================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # tighten later for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -19,7 +19,7 @@ app.add_middleware(
 API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 # ======================
-# CACHE SYSTEM
+# CACHE
 # ======================
 cache = {}
 CACHE_TTL = 60  # seconds
@@ -50,7 +50,7 @@ def fetch_prices(symbol: str):
         return None
 
 # ======================
-# CACHED WRAPPER
+# CACHE WRAPPER
 # ======================
 def get_prices(symbol: str):
     now = time()
@@ -94,11 +94,12 @@ def atr(high, low, close, period=14):
     return sum(trs[-period:]) / period
 
 # ======================
-# MAIN DASHBOARD ENDPOINT
+# MULTI-ASSET ENDPOINT
 # ======================
-@app.get("/dashboard/forex")
-def dashboard():
-    data = get_prices("EUR/USD")
+@app.get("/dashboard/{symbol}")
+def dashboard(symbol: str):
+
+    data = get_prices(symbol)
 
     if not data:
         return {"error": "No data"}
@@ -130,7 +131,7 @@ def dashboard():
         tp = None
 
     return {
-        "symbol": "EUR/USD",
+        "symbol": symbol,
         "prices": closes,
         "ema10": ema10_series,
         "ema20": ema20_series,
