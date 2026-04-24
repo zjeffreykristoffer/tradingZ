@@ -11,10 +11,6 @@
             text-align: center;
         }
 
-        h1 {
-            margin-top: 20px;
-        }
-
         .card {
             background: #1e293b;
             padding: 20px;
@@ -41,7 +37,7 @@
 
 <body>
 
-<h1>📊 Multi-Asset Trading Dashboard</h1>
+<h1>📊 Trading Dashboard</h1>
 
 <div id="dashboard"></div>
 
@@ -49,34 +45,34 @@
 
 const API = "https://tradingz.onrender.com";
 
-async function loadAll() {
+async function load() {
 
-    const pairs = [
-        { name: "EUR/USD", symbol: "EUR/USD" },
-        { name: "GOLD", symbol: "XAU/USD" }
+    const res = await fetch(`${API}/dashboard/all`);
+    const data = await res.json();
+
+    const assets = [
+        { name: "EUR/USD", key: "EURUSD" },
+        { name: "GOLD", key: "GOLD" }
     ];
 
     let html = "";
 
-    for (let p of pairs) {
+    for (let a of assets) {
 
-        const res = await fetch(`${API}/dashboard/${p.symbol}`);
-        const data = await res.json();
+        const d = data[a.key];
 
-        if (data.error) continue;
-
-        let cls = (data.signal || "").toLowerCase();
+        let cls = (d.signal || "").toLowerCase();
 
         html += `
         <div class="card">
-            <h2>${p.name}</h2>
+            <h2>${a.name}</h2>
 
             <table>
-                <tr><td>Signal</td><td class="${cls}">${data.signal}</td></tr>
-                <tr><td>Entry</td><td>${data.entry}</td></tr>
-                <tr><td>Stop Loss</td><td>${data.stop_loss ?? "-"}</td></tr>
-                <tr><td>Take Profit</td><td>${data.take_profit ?? "-"}</td></tr>
-                <tr><td>ATR</td><td>${data.atr}</td></tr>
+                <tr><td>Signal</td><td class="${cls}">${d.signal}</td></tr>
+                <tr><td>Entry</td><td>${d.entry}</td></tr>
+                <tr><td>Stop Loss</td><td>${d.stop_loss ?? "-"}</td></tr>
+                <tr><td>Take Profit</td><td>${d.take_profit ?? "-"}</td></tr>
+                <tr><td>ATR</td><td>${d.atr}</td></tr>
             </table>
         </div>
         `;
@@ -85,8 +81,8 @@ async function loadAll() {
     document.getElementById("dashboard").innerHTML = html;
 }
 
-loadAll();
-setInterval(loadAll, 60000);
+load();
+setInterval(load, 60000);
 
 </script>
 
