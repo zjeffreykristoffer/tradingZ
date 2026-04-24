@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Trading Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
     <style>
         body {
@@ -37,23 +38,26 @@
 
 <body>
 
-<h1>📊 Live Trading Dashboard</h1>
+<h1>📊 Trading Dashboard</h1>
 
 <div id="dashboard"></div>
 
 <script>
 
-const ws = new WebSocket("wss://tradingz.onrender.com/ws");
+const API = "https://tradingz.onrender.com";
 
-ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    render(data);
-};
+let lastPrices = {};
 
 function render(data) {
 
     const assets = [
         { name: "EUR/USD", key: "EURUSD" },
+        { name: "GBP/USD", key: "GBPUSD" },
+        { name: "USD/JPY", key: "USDJPY" },
+        { name: "AUD/USD", key: "AUDUSD" },
+        { name: "USD/CAD", key: "USDCAD" },
+        { name: "USD/CHF", key: "USDCHF" },
+        { name: "NZD/USD", key: "NZDUSD" },
         { name: "GOLD", key: "GOLD" }
     ];
 
@@ -64,12 +68,24 @@ function render(data) {
         const d = data[a.key];
         if (!d) continue;
 
+        let price = d.entry;
+
+        let color = "#38bdf8";
+        if (lastPrices[a.key]) {
+            if (price > lastPrices[a.key]) color = "#22c55e";
+            else if (price < lastPrices[a.key]) color = "#ef4444";
+        }
+        lastPrices[a.key] = price;
+
+        let cls = (d.signal || "").toLowerCase();
+
         html += `
         <div class="card">
             <h2>${a.name}</h2>
 
             <table>
-                <tr><td>Signal</td><td class="${d.signal.toLowerCase()}">${d.signal}</td></tr>
+                <tr><td>Signal</td><td class="${cls}">${d.signal}</td></tr>
+                <tr><td>Live Price</td><td style="color:${color}; font-weight:bold">${price}</td></tr>
                 <tr><td>Entry</td><td>${d.entry}</td></tr>
                 <tr><td>Stop Loss</td><td>${d.stop_loss ?? "-"}</td></tr>
                 <tr><td>Take Profit</td><td>${d.take_profit ?? "-"}</td></tr>
@@ -81,6 +97,15 @@ function render(data) {
 
     document.getElementById("dashboard").innerHTML = html;
 }
+
+async function load() {
+    const res = await fetch(`${API}/dashboard/all`);
+    const data = await res.json();
+    render(data);
+}
+
+load();
+setInterval(load, 10000); // 10s refresh (safe)
 
 </script>
 
