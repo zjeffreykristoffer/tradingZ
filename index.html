@@ -9,31 +9,53 @@
             background: #0f172a;
             color: white;
             text-align: center;
+            margin: 0;
+        }
+
+        h1 {
+            margin: 20px 0;
+        }
+
+        /* GRID LAYOUT */
+        #dashboard {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            width: 90%;
+            margin: auto;
         }
 
         .card {
             background: #1e293b;
-            padding: 20px;
-            margin: 20px auto;
-            width: 80%;
-            border-radius: 10px;
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
+            min-height: 220px;
         }
 
         table {
-            margin: auto;
-            width: 60%;
+            width: 100%;
             border-collapse: collapse;
+            margin-top: 10px;
         }
 
         td {
-            padding: 10px;
+            padding: 8px;
             border-bottom: 1px solid #334155;
+            font-size: 14px;
         }
 
         .buy { color: #22c55e; font-weight: bold; }
         .sell { color: #ef4444; font-weight: bold; }
         .hold { color: #facc15; font-weight: bold; }
         .nodata { color: #94a3b8; }
+
+        /* MOBILE RESPONSIVE */
+        @media (max-width: 768px) {
+            #dashboard {
+                grid-template-columns: 1fr;
+            }
+        }
     </style>
 </head>
 
@@ -55,16 +77,16 @@ function render(data) {
 
     const container = document.getElementById("dashboard");
 
-    if (!data || typeof data !== "object") {
+    if (!data) {
         container.innerHTML = "<h3 class='nodata'>No data from server</h3>";
         return;
     }
 
     const assets = [
         { name: "EUR/USD", key: "EURUSD" },
-        { name: "GOLD", key: "GOLD" },
-        {name: "GBP/USD", key: "GBPUSD" },
-        { name: "USD/CAD", key: "USDCAD" }
+        { name: "GBP/USD", key: "GBPUSD" },
+        { name: "USD/CAD", key: "USDCAD" },
+        { name: "GOLD", key: "GOLD" }
     ];
 
     let html = "";
@@ -77,7 +99,7 @@ function render(data) {
             html += `
             <div class="card">
                 <h2>${a.name}</h2>
-                <h3 class="nodata">No data</h3>
+                <p class="nodata">No data</p>
             </div>`;
             continue;
         }
@@ -106,9 +128,6 @@ async function load() {
 
     try {
         const res = await fetch(`${API}/dashboard/all`);
-
-        if (!res.ok) throw new Error("HTTP error " + res.status);
-
         const data = await res.json();
 
         console.log("DATA:", data);
@@ -116,9 +135,7 @@ async function load() {
         render(data);
 
     } catch (err) {
-
-        console.error("Fetch error:", err);
-
+        console.error(err);
         document.getElementById("dashboard").innerHTML =
             "<h3 style='color:red'>Backend unavailable</h3>";
     }
@@ -127,7 +144,7 @@ async function load() {
 // initial load
 load();
 
-// ONLY ONE API CALL EVERY 2 MINUTES
+// 2-minute refresh (your setup)
 setInterval(load, 120000);
 
 </script>
