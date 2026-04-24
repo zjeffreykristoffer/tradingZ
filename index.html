@@ -76,7 +76,7 @@ td {
 
 <div class="header">
     <h2>📊 AI Trading Dashboard</h2>
-    <div>Refresh: <span id="countdown">120</span>s</div>
+    <div class="timer">Refresh: <span id="countdown">120</span>s</div>
 </div>
 
 <div id="dashboard">Loading...</div>
@@ -86,78 +86,112 @@ td {
 const API = "https://tradingz.onrender.com";
 let countdown = 120;
 
-function safe(v){ return v ?? "-"; }
+// ======================
+// SAFE VALUE HANDLER
+// ======================
+function safe(v){
+    return (v === null || v === undefined) ? "-" : v;
+}
 
+// ======================
 function getSignalClass(s){
+    if(!s) return "no-trade";
     return s.toLowerCase().replace(/\s+/g,"-");
 }
 
-function render(data){
-
+// ======================
+// FIXED ASSET LIST (6 PAIRS)
+// ======================
 const assets = [
     {name:"EUR/USD", key:"EURUSD"},
     {name:"GBP/USD", key:"GBPUSD"},
     {name:"USD/CAD", key:"USDCAD"},
-    {name:"GOLD", key:"GOLD"}
+    {name:"GOLD", key:"GOLD"},
+    {name:"BRENT OIL", key:"UK OIL"},
+    {name:"WTI OIL", key:"US OIL"}
 ];
 
-let html="";
+// ======================
+// RENDER
+// ======================
+function render(data){
+
+let html = "";
 
 for(let a of assets){
-let d = data[a.key];
-if(!d) continue;
 
-html += `
-<div class="card">
+    const d = data[a.key] || {
+        signal:"NO DATA",
+        long_score:0,
+        short_score:0
+    };
 
-<h3>${a.name}</h3>
+    html += `
+    <div class="card">
 
-<div class="signal ${getSignalClass(d.signal)}">
-${d.signal}
-</div>
+        <h3>${a.name}</h3>
 
-<div>LONG ${d.long_score}</div>
-<div class="bar"><div class="fill-long" style="width:${d.long_score}%"></div></div>
+        <div class="signal ${getSignalClass(d.signal)}">
+            ${d.signal}
+        </div>
 
-<div>SHORT ${d.short_score}</div>
-<div class="bar"><div class="fill-short" style="width:${d.short_score}%"></div></div>
+        <div>LONG ${safe(d.long_score)}</div>
+        <div class="bar">
+            <div class="fill-long" style="width:${safe(d.long_score)}%"></div>
+        </div>
 
-<table>
-<tr><td>Entry</td><td>${safe(d.entry)}</td></tr>
-<tr><td>SL</td><td>${safe(d.stop_loss)}</td></tr>
-<tr><td>TP</td><td>${safe(d.take_profit)}</td></tr>
+        <div>SHORT ${safe(d.short_score)}</div>
+        <div class="bar">
+            <div class="fill-short" style="width:${safe(d.short_score)}%"></div>
+        </div>
 
-<tr><td>Lot Size</td><td style="color:#38bdf8">${safe(d.lot_size)}</td></tr>
-<tr><td>Risk $</td><td style="color:#fbbf24">${safe(d.risk_per_trade_usd)}</td></tr>
+        <table>
+            <tr><td>Entry</td><td>${safe(d.entry)}</td></tr>
+            <tr><td>SL</td><td>${safe(d.stop_loss)}</td></tr>
+            <tr><td>TP</td><td>${safe(d.take_profit)}</td></tr>
 
-<tr><td>RSI</td><td>${safe(d.rsi)}</td></tr>
-<tr><td>ATR</td><td>${safe(d.atr)}</td></tr>
-</table>
+            <tr><td>Lot Size</td><td style="color:#38bdf8">${safe(d.lot_size)}</td></tr>
+            <tr><td>Risk $</td><td style="color:#fbbf24">${safe(d.risk_per_trade_usd)}</td></tr>
 
-</div>
-`;
+            <tr><td>RSI</td><td>${safe(d.rsi)}</td></tr>
+            <tr><td>ATR</td><td>${safe(d.atr)}</td></tr>
+        </table>
+
+    </div>
+    `;
 }
 
 document.getElementById("dashboard").innerHTML = html;
 }
 
+// ======================
+// LOAD DATA
+// ======================
 async function load(){
-try{
-const r = await fetch(API+"/dashboard/all");
-const d = await r.json();
-render(d);
-countdown=120;
-}catch(e){
-document.getElementById("dashboard").innerHTML="API error";
-}
+    try{
+        const res = await fetch(API + "/dashboard/all");
+        const data = await res.json();
+        render(data);
+        countdown = 120;
+    }catch(e){
+        document.getElementById("dashboard").innerHTML =
+            "<h3 style='color:red'>API Error</h3>";
+    }
 }
 
-setInterval(()=>{
-countdown--;
-document.getElementById("countdown").innerText=countdown;
-if(countdown<=0) load();
-},1000);
+// ======================
+// TIMER
+// ======================
+setInterval(() => {
+    countdown--;
+    document.getElementById("countdown").innerText = countdown;
 
+    if(countdown <= 0){
+        load();
+    }
+}, 1000);
+
+// initial load
 load();
 
 </script>
