@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import requests
 from time import time
 import math
+import asyncio
+from datetime import datetime, timedelta
 
 app = FastAPI()
 
@@ -17,10 +19,44 @@ app.add_middleware(
 API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 # ======================
+# SYNC STATE (NEW)
+# ======================
+last_sync_time = None
+next_sync_time = None
+SYNC_INTERVAL = 300  # 5 minutes
+
+# ======================
 # CACHE
 # ======================
 cache = {}
 CACHE_TTL = 120
+
+# ======================
+# BACKGROUND SYNC WORKER (NEW)
+# ======================
+@app.on_event("startup")
+async def start_sync():
+    asyncio.create_task(sync_worker())
+
+
+async def sync_worker():
+    global last_sync_time, next_sync_time
+
+    symbols = ["EUR/USD", "GBP/USD", "USD/CAD", "XAU/USD"]
+
+    while True:
+        print("SYNCING TwelveData...")
+
+        # force refresh cache
+        for symbol in symbols:
+            get_prices(symbol)
+
+        last_sync_time = datetime.utcnow()
+        next_sync_time = last_sync_time + timedelta(seconds=SYNC_INTERVAL)
+
+        print("SYNC COMPLETE:", last_sync_time)
+
+        await asyncio.sleep(SYNC_INTERVAL)
 
 # ======================
 # DATA FETCH
@@ -59,7 +95,6 @@ def get_prices(symbol):
 # ======================
 # INDICATORS
 # ======================
-
 def ema(data, period):
     k = 2 / (period + 1)
     out = [data[0]]
@@ -137,17 +172,11 @@ def score_trade(closes, highs, lows):
     score_long = 0
     score_short = 0
 
-    # ======================
-    # TREND (35 pts)
-    # ======================
     if ema50[-1] > ema200[-1]:
         score_long += 35
     else:
         score_short += 35
 
-    # ======================
-    # RSI (25 pts)
-    # ======================
     if 45 <= rsi_val <= 65:
         score_long += 15
         score_short += 15
@@ -156,17 +185,11 @@ def score_trade(closes, highs, lows):
     elif rsi_val < 45:
         score_long += 25
 
-    # ======================
-    # BOLLINGER (25 pts)
-    # ======================
     if price <= mid:
         score_long += 25
     if price >= mid:
         score_short += 25
 
-    # ======================
-    # VOLATILITY (15 pts)
-    # ======================
     if vol > 0:
         score_long += 15
         score_short += 15
@@ -192,9 +215,6 @@ def process(symbol):
         closes, highs, lows
     )
 
-    # ======================
-    # SIGNAL DECISION
-    # ======================
     if long_score >= 85:
         signal = "STRONG BUY"
     elif long_score >= 70:
@@ -209,9 +229,6 @@ def process(symbol):
     elif short_score >= 70:
         signal = "SELL"
 
-    # ======================
-    # RISK (ATR)
-    # ======================
     entry = price
 
     if "BUY" in signal:
@@ -244,6 +261,10 @@ def process(symbol):
 @app.get("/dashboard/all")
 def dashboard_all():
     return {
+        "meta": {
+            "last_sync": last_sync_time.isoformat() if last_sync_time else None,
+            "next_sync": next_sync_time.isoformat() if next_sync_time else None
+        },
         "EURUSD": process("EUR/USD"),
         "GBPUSD": process("GBP/USD"),
         "USDCAD": process("USD/CAD"),
