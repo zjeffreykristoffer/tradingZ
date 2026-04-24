@@ -23,7 +23,7 @@ API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 # CACHE
 # ======================
 cache = {}
-CACHE_TTL = 120  # 2 minutes
+CACHE_TTL = 300  # 2 minutes
 
 # ======================
 # FETCH DATA
