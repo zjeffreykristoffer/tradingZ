@@ -10,7 +10,7 @@ app = FastAPI()
 # ======================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -22,7 +22,7 @@ API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 # CACHE
 # ======================
 cache = {}
-CACHE_TTL = 60  # seconds
+CACHE_TTL = 60
 
 # ======================
 # FETCH DATA
@@ -30,29 +30,25 @@ CACHE_TTL = 60  # seconds
 def fetch_prices(symbol: str):
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&apikey={API_KEY}"
 
-    try:
-        r = requests.get(url, timeout=10).json()
+    r = requests.get(url, timeout=10).json()
 
-        if "values" not in r:
-            return None
-
-        closes = [float(x["close"]) for x in r["values"]]
-        highs = [float(x["high"]) for x in r["values"]]
-        lows = [float(x["low"]) for x in r["values"]]
-
-        closes.reverse()
-        highs.reverse()
-        lows.reverse()
-
-        return closes, highs, lows
-
-    except:
+    if "values" not in r:
         return None
+
+    closes = [float(x["close"]) for x in r["values"]]
+    highs = [float(x["high"]) for x in r["values"]]
+    lows = [float(x["low"]) for x in r["values"]]
+
+    closes.reverse()
+    highs.reverse()
+    lows.reverse()
+
+    return closes, highs, lows
 
 # ======================
 # CACHE WRAPPER
 # ======================
-def get_prices(symbol: str):
+def get_prices(symbol):
     now = time()
 
     if symbol in cache:
@@ -61,10 +57,7 @@ def get_prices(symbol: str):
 
     data = fetch_prices(symbol)
 
-    cache[symbol] = {
-        "data": data,
-        "time": now
-    }
+    cache[symbol] = {"data": data, "time": now}
 
     return data
 
@@ -94,11 +87,9 @@ def atr(high, low, close, period=14):
     return sum(trs[-period:]) / period
 
 # ======================
-# MULTI-ASSET ENDPOINT
+# PROCESS ONE ASSET
 # ======================
-@app.get("/dashboard/{symbol}")
-def dashboard(symbol: str):
-
+def process(symbol):
     data = get_prices(symbol)
 
     if not data:
@@ -106,26 +97,20 @@ def dashboard(symbol: str):
 
     closes, highs, lows = data
 
-    if len(closes) < 20:
-        return {"error": "Not enough data"}
+    ema10 = ema(closes, 10)
+    ema20 = ema(closes, 20)
 
-    ema10_series = ema(closes, 10)
-    ema20_series = ema(closes, 20)
+    signal = "BUY" if ema10[-1] > ema20[-1] else "SELL" if ema10[-1] < ema20[-1] else "HOLD"
 
-    ema10 = ema10_series[-1]
-    ema20 = ema20_series[-1]
-
-    signal = "BUY" if ema10 > ema20 else "SELL" if ema10 < ema20 else "HOLD"
-
-    volatility = atr(highs, lows, closes)
+    vol = atr(highs, lows, closes)
     entry = closes[-1]
 
     if signal == "BUY":
-        sl = entry - (volatility * 1.5)
-        tp = entry + (volatility * 2)
+        sl = entry - (vol * 1.5)
+        tp = entry + (vol * 2)
     elif signal == "SELL":
-        sl = entry + (volatility * 1.5)
-        tp = entry - (volatility * 2)
+        sl = entry + (vol * 1.5)
+        tp = entry - (vol * 2)
     else:
         sl = None
         tp = None
@@ -133,13 +118,24 @@ def dashboard(symbol: str):
     return {
         "symbol": symbol,
         "prices": closes,
-        "ema10": ema10_series,
-        "ema20": ema20_series,
+        "ema10": ema10,
+        "ema20": ema20,
         "signal": signal,
         "entry": entry,
         "stop_loss": round(sl, 5) if sl else None,
         "take_profit": round(tp, 5) if tp else None,
-        "atr": round(volatility, 5)
+        "atr": round(vol, 5)
+    }
+
+# ======================
+# SINGLE DASHBOARD ENDPOINT
+# ======================
+@app.get("/dashboard/all")
+def dashboard_all():
+
+    return {
+        "EURUSD": process("EUR/USD"),
+        "GOLD": process("XAU/USD")
     }
 
 @app.get("/")
