@@ -37,18 +37,20 @@
 
 <body>
 
-<h1>📊 Trading Dashboard</h1>
+<h1>📊 Live Trading Dashboard</h1>
 
 <div id="dashboard"></div>
 
 <script>
 
-const API = "https://tradingz.onrender.com";
+const ws = new WebSocket("wss://tradingz.onrender.com/ws");
 
-async function load() {
+ws.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+    render(data);
+};
 
-    const res = await fetch(`${API}/dashboard/all`);
-    const data = await res.json();
+function render(data) {
 
     const assets = [
         { name: "EUR/USD", key: "EURUSD" },
@@ -60,15 +62,14 @@ async function load() {
     for (let a of assets) {
 
         const d = data[a.key];
-
-        let cls = (d.signal || "").toLowerCase();
+        if (!d) continue;
 
         html += `
         <div class="card">
             <h2>${a.name}</h2>
 
             <table>
-                <tr><td>Signal</td><td class="${cls}">${d.signal}</td></tr>
+                <tr><td>Signal</td><td class="${d.signal.toLowerCase()}">${d.signal}</td></tr>
                 <tr><td>Entry</td><td>${d.entry}</td></tr>
                 <tr><td>Stop Loss</td><td>${d.stop_loss ?? "-"}</td></tr>
                 <tr><td>Take Profit</td><td>${d.take_profit ?? "-"}</td></tr>
@@ -80,9 +81,6 @@ async function load() {
 
     document.getElementById("dashboard").innerHTML = html;
 }
-
-load();
-setInterval(load, 60000);
 
 </script>
 
