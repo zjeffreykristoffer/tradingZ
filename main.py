@@ -242,8 +242,8 @@ def dashboard_all():
         "GBPUSD": process("GBP/USD"),
         "USDCAD": process("USD/CAD"),
         "GOLD": process("XAU/USD"),
-        "UK OIL": process("BRENT"),
-        "US OIL": process("WTI")
+        "UK OIL": process("BRENT/USD"),
+        "US OIL": process("WTI/USD")
     }
 
 
