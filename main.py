@@ -170,14 +170,38 @@ def score_trade(closes, highs, lows):
 # ======================
 # LOT SIZE CALC
 # ======================
-def calculate_lot_size(balance, risk_pct, entry, stop_loss):
+
+def calculate_lot_size(symbol, balance, risk_pct, entry, stop_loss):
     risk_amount = balance * risk_pct
     sl_distance = abs(entry - stop_loss)
 
     if sl_distance == 0:
         return 0.01
 
-    lot_size = risk_amount / (sl_distance * 100000)
+    # ======================
+    # SYMBOL RULES (pip model)
+    # ======================
+    
+    if "JPY" in symbol:
+        pip_size = 0.01
+        pip_value = 9.0      # approx USD per pip per lot
+    elif "XAU" in symbol or "GOLD" in symbol:
+        pip_size = 0.1
+        pip_value = 1.0      # simplified gold contract model
+    else:
+        pip_size = 0.0001
+        pip_value = 10.0     # EURUSD / GBPUSD standard
+
+    # convert price movement → pips
+    pips = sl_distance / pip_size
+
+    # risk per 1 lot
+    risk_per_lot = pips * pip_value
+
+    if risk_per_lot <= 0:
+        return 0.01
+
+    lot_size = risk_amount / risk_per_lot
 
     return round(max(0.01, min(lot_size, 10)), 2)
 
@@ -226,12 +250,13 @@ def process(symbol):
         sl = None
         tp = None
 
-    lot_size = calculate_lot_size(
-        ACCOUNT_BALANCE,
-        RISK_PER_TRADE,
-        entry,
-        sl
-    ) if sl else None
+lot_size = calculate_lot_size(
+    symbol,
+    ACCOUNT_BALANCE,
+    RISK_PER_TRADE,
+    entry,
+    sl
+) if sl else None
 
     return {
         "symbol": symbol,
