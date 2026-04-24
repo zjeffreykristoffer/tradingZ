@@ -1,205 +1,163 @@
 <!DOCTYPE html>
-
 <html>
 <head>
-    <title>AI Trading Dashboard</title>
+<title>AI Trading Dashboard</title>
 
 <style>
-    body {
-        font-family: Arial;
-        background: #0f172a;
-        color: white;
-        margin: 0;
-    }
+body {
+    font-family: Arial;
+    background: #0f172a;
+    color: white;
+    margin: 0;
+}
 
-    /* HEADER */
-    .header {
-        position: sticky;
-        top: 0;
-        background: #020617;
-        padding: 10px;
-        text-align: center;
-        border-bottom: 1px solid #334155;
-        z-index: 100;
-    }
+.header {
+    position: sticky;
+    top: 0;
+    background: #020617;
+    padding: 10px;
+    text-align: center;
+    border-bottom: 1px solid #334155;
+}
 
-    .timer {
-        font-size: 14px;
-        color: #94a3b8;
-    }
+.timer {
+    font-size: 14px;
+    color: #94a3b8;
+}
 
-    h1 {
-        margin: 5px;
-        font-size: 20px;
-    }
+#dashboard {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 15px;
+    padding: 15px;
+}
 
-    /* GRID */
-    #dashboard {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 15px;
-        padding: 15px;
-    }
+.card {
+    background: #1e293b;
+    padding: 12px;
+    border-radius: 10px;
+}
 
-    .card {
-        background: #1e293b;
-        padding: 12px;
-        border-radius: 10px;
-    }
+.signal {
+    font-weight: bold;
+}
 
-    .signal {
-        font-size: 16px;
-        font-weight: bold;
-        margin-bottom: 8px;
-    }
+.strong-buy { color: #22c55e; }
+.buy { color: #4ade80; }
+.weak-buy { color: #facc15; }
+.sell { color: #f87171; }
+.strong-sell { color: #ef4444; }
+.no-trade { color: #94a3b8; }
 
-    .strong-buy { color: #22c55e; }
-    .buy { color: #4ade80; }
-    .weak-buy { color: #facc15; }
-    .sell { color: #f87171; }
-    .strong-sell { color: #ef4444; }
-    .no-trade { color: #94a3b8; }
+.bar {
+    height: 8px;
+    background: #334155;
+    border-radius: 5px;
+}
 
-    .bar {
-        height: 8px;
-        border-radius: 5px;
-        background: #334155;
-        margin: 4px 0;
-    }
+.fill-long { background: #22c55e; height: 100%; }
+.fill-short { background: #ef4444; height: 100%; }
 
-    .fill-long {
-        height: 100%;
-        background: #22c55e;
-    }
+table {
+    width: 100%;
+    margin-top: 8px;
+    font-size: 12px;
+}
 
-    .fill-short {
-        height: 100%;
-        background: #ef4444;
-    }
-
-    table {
-        width: 100%;
-        margin-top: 8px;
-        border-collapse: collapse;
-    }
-
-    td {
-        padding: 5px;
-        border-bottom: 1px solid #334155;
-        font-size: 12px;
-    }
-
-    /* MOBILE */
-    @media (max-width: 768px) {
-        #dashboard {
-            grid-template-columns: 1fr;
-        }
-    }
+td {
+    padding: 4px;
+    border-bottom: 1px solid #334155;
+}
 </style>
-
 
 </head>
 
 <body>
 
 <div class="header">
-    <h1>📊 AI Trading Dashboard</h1>
-    <div class="timer">
-        Refresh in: <span id="countdown">120</span>s
-    </div>
+    <h2>📊 AI Trading Dashboard</h2>
+    <div>Refresh: <span id="countdown">120</span>s</div>
 </div>
 
 <div id="dashboard">Loading...</div>
 
 <script>
 
-const API = "https://tradingz.onrender.com"; // change if needed
-const REFRESH_INTERVAL = 120;
+const API = "https://tradingz.onrender.com";
+let countdown = 120;
 
-let countdown = REFRESH_INTERVAL;
+function safe(v){ return v ?? "-"; }
 
-function getSignalClass(signal) {
-    return signal.toLowerCase().replace(" ", "-");
+function getSignalClass(s){
+    return s.toLowerCase().replace(/\s+/g,"-");
 }
 
-function safe(v) {
-    return (v === null || v === undefined) ? "-" : v;
+function render(data){
+
+const assets = [
+    {name:"EUR/USD", key:"EURUSD"},
+    {name:"GBP/USD", key:"GBPUSD"},
+    {name:"USD/CAD", key:"USDCAD"},
+    {name:"GOLD", key:"GOLD"}
+];
+
+let html="";
+
+for(let a of assets){
+let d = data[a.key];
+if(!d) continue;
+
+html += `
+<div class="card">
+
+<h3>${a.name}</h3>
+
+<div class="signal ${getSignalClass(d.signal)}">
+${d.signal}
+</div>
+
+<div>LONG ${d.long_score}</div>
+<div class="bar"><div class="fill-long" style="width:${d.long_score}%"></div></div>
+
+<div>SHORT ${d.short_score}</div>
+<div class="bar"><div class="fill-short" style="width:${d.short_score}%"></div></div>
+
+<table>
+<tr><td>Entry</td><td>${safe(d.entry)}</td></tr>
+<tr><td>SL</td><td>${safe(d.stop_loss)}</td></tr>
+<tr><td>TP</td><td>${safe(d.take_profit)}</td></tr>
+
+<tr><td>Lot Size</td><td style="color:#38bdf8">${safe(d.lot_size)}</td></tr>
+<tr><td>Risk $</td><td style="color:#fbbf24">${safe(d.risk_per_trade_usd)}</td></tr>
+
+<tr><td>RSI</td><td>${safe(d.rsi)}</td></tr>
+<tr><td>ATR</td><td>${safe(d.atr)}</td></tr>
+</table>
+
+</div>
+`;
 }
 
-function render(data) {
-
-    const assets = [
-        { name: "EUR/USD", key: "EURUSD" },
-        { name: "GBP/USD", key: "GBPUSD" },
-        { name: "USD/CAD", key: "USDCAD" },
-        { name: "GOLD", key: "GOLD" }
-    ];
-
-    let html = "";
-
-    for (let a of assets) {
-
-        const d = data[a.key];
-        if (!d) continue;
-
-        const signalClass = getSignalClass(d.signal);
-
-        html += `
-        <div class="card">
-
-            <h3>${a.name}</h3>
-
-            <div class="signal ${signalClass}">
-                ${d.signal}
-            </div>
-
-            <div>LONG (${d.long_score})</div>
-            <div class="bar">
-                <div class="fill-long" style="width:${d.long_score}%"></div>
-            </div>
-
-            <div>SHORT (${d.short_score})</div>
-            <div class="bar">
-                <div class="fill-short" style="width:${d.short_score}%"></div>
-            </div>
-
-            <table>
-                <tr><td>Entry</td><td>${safe(d.entry)}</td></tr>
-                <tr><td>SL</td><td>${safe(d.stop_loss)}</td></tr>
-                <tr><td>TP</td><td>${safe(d.take_profit)}</td></tr>
-                <tr><td>RSI</td><td>${safe(d.rsi)}</td></tr>
-                <tr><td>ATR</td><td>${safe(d.atr)}</td></tr>
-            </table>
-
-        </div>
-        `;
-    }
-
-    document.getElementById("dashboard").innerHTML = html;
+document.getElementById("dashboard").innerHTML = html;
 }
 
-async function load() {
-    try {
-        const res = await fetch(`${API}/dashboard/all`);
-        const data = await res.json();
-        render(data);
-        countdown = REFRESH_INTERVAL; // reset timer
-    } catch (e) {
-        document.getElementById("dashboard").innerHTML =
-            "<h3 style='color:red'>Backend unavailable</h3>";
-    }
+async function load(){
+try{
+const r = await fetch(API+"/dashboard/all");
+const d = await r.json();
+render(d);
+countdown=120;
+}catch(e){
+document.getElementById("dashboard").innerHTML="API error";
+}
 }
 
-// countdown tick every second
-setInterval(() => {
-    countdown--;
-    if (countdown <= 0) {
-        load();
-    }
-    document.getElementById("countdown").innerText = countdown;
-}, 1000);
+setInterval(()=>{
+countdown--;
+document.getElementById("countdown").innerText=countdown;
+if(countdown<=0) load();
+},1000);
 
-// initial load
 load();
 
 </script>
