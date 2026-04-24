@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = "#"
+API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 # ======================
 # CACHE
@@ -238,9 +238,9 @@ def process(symbol):
 @app.get("/dashboard/all")
 def dashboard_all():
     return {
-        "EURUSD": process("EUR/USD"),
-        "GBPUSD": process("GBP/USD"),
-        "USDCAD": process("USD/CAD"),
+        #"EURUSD": process("EUR/USD"),
+        #"GBPUSD": process("GBP/USD"),
+        #"USDCAD": process("USD/CAD"),
         "GOLD": process("XAU/USD")
     }
 
