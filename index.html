@@ -4,38 +4,53 @@
 <head>
     <title>AI Trading Dashboard</title>
 
-```
 <style>
     body {
         font-family: Arial;
         background: #0f172a;
         color: white;
         margin: 0;
+    }
+
+    /* HEADER */
+    .header {
+        position: sticky;
+        top: 0;
+        background: #020617;
+        padding: 10px;
         text-align: center;
+        border-bottom: 1px solid #334155;
+        z-index: 100;
+    }
+
+    .timer {
+        font-size: 14px;
+        color: #94a3b8;
     }
 
     h1 {
-        margin: 20px;
+        margin: 5px;
+        font-size: 20px;
     }
 
+    /* GRID */
     #dashboard {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
-        gap: 20px;
-        width: 90%;
-        margin: auto;
+        gap: 15px;
+        padding: 15px;
     }
 
     .card {
         background: #1e293b;
-        padding: 15px;
-        border-radius: 12px;
+        padding: 12px;
+        border-radius: 10px;
     }
 
     .signal {
-        font-size: 20px;
+        font-size: 16px;
         font-weight: bold;
-        margin-bottom: 10px;
+        margin-bottom: 8px;
     }
 
     .strong-buy { color: #22c55e; }
@@ -46,10 +61,10 @@
     .no-trade { color: #94a3b8; }
 
     .bar {
-        height: 10px;
+        height: 8px;
         border-radius: 5px;
         background: #334155;
-        margin: 5px 0;
+        margin: 4px 0;
     }
 
     .fill-long {
@@ -64,16 +79,17 @@
 
     table {
         width: 100%;
-        margin-top: 10px;
+        margin-top: 8px;
         border-collapse: collapse;
     }
 
     td {
-        padding: 6px;
+        padding: 5px;
         border-bottom: 1px solid #334155;
-        font-size: 13px;
+        font-size: 12px;
     }
 
+    /* MOBILE */
     @media (max-width: 768px) {
         #dashboard {
             grid-template-columns: 1fr;
@@ -86,13 +102,21 @@
 
 <body>
 
-<h1>📊 AI Trading Dashboard</h1>
+<div class="header">
+    <h1>📊 AI Trading Dashboard</h1>
+    <div class="timer">
+        Refresh in: <span id="countdown">120</span>s
+    </div>
+</div>
 
 <div id="dashboard">Loading...</div>
 
 <script>
 
-const API = "https://tradingz.onrender.com"; // CHANGE if needed
+const API = "https://tradingz.onrender.com"; // change if needed
+const REFRESH_INTERVAL = 120;
+
+let countdown = REFRESH_INTERVAL;
 
 function getSignalClass(signal) {
     return signal.toLowerCase().replace(" ", "-");
@@ -116,42 +140,35 @@ function render(data) {
     for (let a of assets) {
 
         const d = data[a.key];
-
         if (!d) continue;
 
         const signalClass = getSignalClass(d.signal);
 
-        const longWidth = Math.min(d.long_score, 100);
-        const shortWidth = Math.min(d.short_score, 100);
-
         html += `
         <div class="card">
 
-            <h2>${a.name}</h2>
+            <h3>${a.name}</h3>
 
             <div class="signal ${signalClass}">
                 ${d.signal}
             </div>
 
-            <!-- SCORE BARS -->
-            <div>LONG SCORE (${d.long_score})</div>
+            <div>LONG (${d.long_score})</div>
             <div class="bar">
-                <div class="fill-long" style="width:${longWidth}%"></div>
+                <div class="fill-long" style="width:${d.long_score}%"></div>
             </div>
 
-            <div>SHORT SCORE (${d.short_score})</div>
+            <div>SHORT (${d.short_score})</div>
             <div class="bar">
-                <div class="fill-short" style="width:${shortWidth}%"></div>
+                <div class="fill-short" style="width:${d.short_score}%"></div>
             </div>
 
             <table>
                 <tr><td>Entry</td><td>${safe(d.entry)}</td></tr>
-                <tr><td>Stop Loss</td><td>${safe(d.stop_loss)}</td></tr>
-                <tr><td>Take Profit</td><td>${safe(d.take_profit)}</td></tr>
+                <tr><td>SL</td><td>${safe(d.stop_loss)}</td></tr>
+                <tr><td>TP</td><td>${safe(d.take_profit)}</td></tr>
                 <tr><td>RSI</td><td>${safe(d.rsi)}</td></tr>
                 <tr><td>ATR</td><td>${safe(d.atr)}</td></tr>
-                <tr><td>EMA50</td><td>${safe(d.ema50)}</td></tr>
-                <tr><td>EMA200</td><td>${safe(d.ema200)}</td></tr>
             </table>
 
         </div>
@@ -166,14 +183,24 @@ async function load() {
         const res = await fetch(`${API}/dashboard/all`);
         const data = await res.json();
         render(data);
+        countdown = REFRESH_INTERVAL; // reset timer
     } catch (e) {
         document.getElementById("dashboard").innerHTML =
             "<h3 style='color:red'>Backend unavailable</h3>";
     }
 }
 
+// countdown tick every second
+setInterval(() => {
+    countdown--;
+    if (countdown <= 0) {
+        load();
+    }
+    document.getElementById("countdown").innerText = countdown;
+}, 1000);
+
+// initial load
 load();
-setInterval(load, 120000);
 
 </script>
 
