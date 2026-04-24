@@ -16,6 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ⚠️ MUST BE REAL KEY
 API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 # ======================
@@ -23,7 +24,7 @@ API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 # ======================
 last_sync_time = None
 next_sync_time = None
-SYNC_INTERVAL = 300  # 5 minutes
+SYNC_INTERVAL = 300
 
 # ======================
 # CACHE
@@ -32,40 +33,24 @@ cache = {}
 CACHE_TTL = 120
 
 # ======================
-# BACKGROUND SYNC (REAL DATA REFRESH)
-# ======================
-@app.on_event("startup")
-async def start_sync():
-    asyncio.create_task(sync_worker())
-
-
-async def sync_worker():
-    global last_sync_time, next_sync_time
-
-    symbols = ["EUR/USD", "GBP/USD", "USD/CAD", "XAU/USD"]
-
-    while True:
-        print("SYNCING TwelveData...")
-
-        for s in symbols:
-            get_prices(s)
-
-        last_sync_time = datetime.utcnow()
-        next_sync_time = last_sync_time + timedelta(seconds=SYNC_INTERVAL)
-
-        print("SYNC COMPLETE:", last_sync_time)
-
-        await asyncio.sleep(SYNC_INTERVAL)
-
-# ======================
-# DATA FETCH
+# DEBUG FETCH (FIXED)
 # ======================
 def fetch_prices(symbol: str):
     try:
-        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=100&apikey={API_KEY}"
-        r = requests.get(url, timeout=10).json()
+        url = (
+            "https://api.twelvedata.com/time_series"
+            f"?symbol={symbol}"
+            "&interval=15min"
+            "&outputsize=100"
+            f"&apikey={API_KEY}"
+        )
 
+        response = requests.get(url, timeout=10)
+        r = response.json()
+
+        # 🔥 DEBUG OUTPUT (IMPORTANT)
         if "values" not in r:
+            print("❌ TwelveData ERROR for", symbol, r)
             return None
 
         closes = [float(x["close"]) for x in r["values"]][::-1]
@@ -74,7 +59,8 @@ def fetch_prices(symbol: str):
 
         return closes, highs, lows
 
-    except:
+    except Exception as e:
+        print("❌ REQUEST FAILED:", symbol, str(e))
         return None
 
 
@@ -190,7 +176,7 @@ def score_trade(closes, highs, lows):
     return long_score, short_score, ema50, ema200, rsi_val, vol, price, mid
 
 # ======================
-# PROCESS
+# PROCESS (FIXED SAFETY)
 # ======================
 def process(symbol):
     data = get_prices(symbol)
@@ -245,7 +231,7 @@ def process(symbol):
     }
 
 # ======================
-# API ENDPOINT
+# API
 # ======================
 @app.get("/dashboard/all")
 def dashboard_all():
