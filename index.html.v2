@@ -101,7 +101,7 @@
   </div>
 
 <script>
-const API_BASE = "https://YOUR-BACKEND-URL.com"; // 🔥 CHANGE THIS
+const API_BASE = "https://tradingz.onrender.com"; // 🔥 CHANGE THIS
 
 async function fetchData() {
   const symbol = document.getElementById("symbol").value;
