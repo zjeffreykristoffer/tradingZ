@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from time import time
+import asyncio
 import requests
+from time import time
 
 app = FastAPI()
 
@@ -19,17 +20,21 @@ app.add_middleware(
 API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 # ======================
+# WEBSOCKET CLIENTS
+# ======================
+clients = set()
+
+# ======================
 # CACHE
 # ======================
 cache = {}
-CACHE_TTL = 60
+CACHE_TTL = 120  # 2 minutes (important for API saving)
 
 # ======================
-# FETCH DATA
+# DATA FETCH
 # ======================
 def fetch_prices(symbol: str):
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&apikey={API_KEY}"
-
     r = requests.get(url, timeout=10).json()
 
     if "values" not in r:
@@ -45,20 +50,16 @@ def fetch_prices(symbol: str):
 
     return closes, highs, lows
 
-# ======================
-# CACHE WRAPPER
-# ======================
+
 def get_prices(symbol):
     now = time()
 
-    if symbol in cache:
-        if now - cache[symbol]["time"] < CACHE_TTL:
-            return cache[symbol]["data"]
+    if symbol in cache and now - cache[symbol]["time"] < CACHE_TTL:
+        return cache[symbol]["data"]
 
     data = fetch_prices(symbol)
 
     cache[symbol] = {"data": data, "time": now}
-
     return data
 
 # ======================
@@ -73,7 +74,8 @@ def ema(data, period):
 
     return values
 
-def atr(high, low, close, period=14):
+
+def atr(high, low, close):
     trs = []
 
     for i in range(1, len(close)):
@@ -84,16 +86,16 @@ def atr(high, low, close, period=14):
         )
         trs.append(tr)
 
-    return sum(trs[-period:]) / period
+    return sum(trs[-14:]) / 14
 
 # ======================
-# PROCESS ONE ASSET
+# PROCESS SYMBOL
 # ======================
 def process(symbol):
     data = get_prices(symbol)
 
     if not data:
-        return {"error": "No data"}
+        return None
 
     closes, highs, lows = data
 
@@ -106,11 +108,11 @@ def process(symbol):
     entry = closes[-1]
 
     if signal == "BUY":
-        sl = entry - (vol * 1.5)
-        tp = entry + (vol * 2)
+        sl = entry - vol * 1.5
+        tp = entry + vol * 2
     elif signal == "SELL":
-        sl = entry + (vol * 1.5)
-        tp = entry - (vol * 2)
+        sl = entry + vol * 1.5
+        tp = entry - vol * 2
     else:
         sl = None
         tp = None
@@ -128,16 +130,62 @@ def process(symbol):
     }
 
 # ======================
-# SINGLE DASHBOARD ENDPOINT
+# WEBSOCKET
 # ======================
-@app.get("/dashboard/all")
-def dashboard_all():
+@app.websocket("/ws")
+async def ws(websocket: WebSocket):
+    await websocket.accept()
+    clients.add(websocket)
 
-    return {
-        "EURUSD": process("EUR/USD"),
-        "GOLD": process("XAU/USD")
-    }
+    try:
+        while True:
+            await asyncio.sleep(10)
+    except:
+        clients.remove(websocket)
 
+
+async def broadcast(data):
+    dead = []
+
+    for ws in clients:
+        try:
+            await ws.send_json(data)
+        except:
+            dead.append(ws)
+
+    for d in dead:
+        clients.remove(d)
+
+
+# ======================
+# SMART LOOP (LOW API USAGE)
+# ======================
+last_data = {}
+
+async def loop():
+    global last_data
+
+    while True:
+        data = {
+            "EURUSD": process("EUR/USD"),
+            "GOLD": process("XAU/USD")
+        }
+
+        if data != last_data:
+            last_data = data
+            await broadcast(data)
+
+        await asyncio.sleep(120)  # 2 minutes
+
+
+@app.on_event("startup")
+async def start():
+    asyncio.create_task(loop())
+
+
+# ======================
+# ROOT
+# ======================
 @app.get("/")
 def home():
-    return {"message": "Trading API running"}
+    return {"status": "running"}
