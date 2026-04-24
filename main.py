@@ -31,6 +31,7 @@ RISK_PER_TRADE = 0.01
 cache = {}
 CACHE_TTL = 120
 
+
 # ======================
 # DATA FETCH
 # ======================
@@ -168,9 +169,8 @@ def score_trade(closes, highs, lows):
 
 
 # ======================
-# LOT SIZE CALC
+# LOT SIZE CALC (FIXED)
 # ======================
-
 def calculate_lot_size(symbol, balance, risk_pct, entry, stop_loss):
     risk_amount = balance * risk_pct
     sl_distance = abs(entry - stop_loss)
@@ -178,24 +178,19 @@ def calculate_lot_size(symbol, balance, risk_pct, entry, stop_loss):
     if sl_distance == 0:
         return 0.01
 
-    # ======================
-    # SYMBOL RULES (pip model)
-    # ======================
-    
+    symbol = symbol.upper()
+
     if "JPY" in symbol:
         pip_size = 0.01
-        pip_value = 9.0      # approx USD per pip per lot
+        pip_value = 9.0
     elif "XAU" in symbol or "GOLD" in symbol:
         pip_size = 0.1
-        pip_value = 1.0      # simplified gold contract model
+        pip_value = 10.0
     else:
         pip_size = 0.0001
-        pip_value = 10.0     # EURUSD / GBPUSD standard
+        pip_value = 10.0
 
-    # convert price movement → pips
     pips = sl_distance / pip_size
-
-    # risk per 1 lot
     risk_per_lot = pips * pip_value
 
     if risk_per_lot <= 0:
@@ -207,7 +202,7 @@ def calculate_lot_size(symbol, balance, risk_pct, entry, stop_loss):
 
 
 # ======================
-# PROCESS ENGINE
+# PROCESS ENGINE (FIXED INDENTATION)
 # ======================
 def process(symbol):
     data = get_prices(symbol)
@@ -250,13 +245,13 @@ def process(symbol):
         sl = None
         tp = None
 
-lot_size = calculate_lot_size(
-    symbol,
-    ACCOUNT_BALANCE,
-    RISK_PER_TRADE,
-    entry,
-    sl
-) if sl else None
+    lot_size = calculate_lot_size(
+        symbol,
+        ACCOUNT_BALANCE,
+        RISK_PER_TRADE,
+        entry,
+        sl
+    ) if sl else None
 
     return {
         "symbol": symbol,
