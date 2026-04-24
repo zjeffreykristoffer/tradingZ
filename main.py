@@ -16,10 +16,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
+API_KEY = "YOUR_TWELVEDATA_KEY"
 
 # ======================
-# SYNC STATE (NEW)
+# SYNC STATE
 # ======================
 last_sync_time = None
 next_sync_time = None
@@ -32,7 +32,7 @@ cache = {}
 CACHE_TTL = 120
 
 # ======================
-# BACKGROUND SYNC WORKER (NEW)
+# BACKGROUND SYNC (REAL DATA REFRESH)
 # ======================
 @app.on_event("startup")
 async def start_sync():
@@ -47,9 +47,8 @@ async def sync_worker():
     while True:
         print("SYNCING TwelveData...")
 
-        # force refresh cache
-        for symbol in symbols:
-            get_prices(symbol)
+        for s in symbols:
+            get_prices(s)
 
         last_sync_time = datetime.utcnow()
         next_sync_time = last_sync_time + timedelta(seconds=SYNC_INTERVAL)
@@ -93,7 +92,7 @@ def get_prices(symbol):
     return data
 
 # ======================
-# INDICATORS
+# INDICATORS (UNCHANGED)
 # ======================
 def ema(data, period):
     k = 2 / (period + 1)
@@ -158,44 +157,37 @@ def bollinger(data, period=20):
 def score_trade(closes, highs, lows):
     ema50 = ema(closes, 50)
     ema200 = ema(closes, 200)
-
     rsi_vals = rsi(closes)
-
     vol = atr(highs, lows, closes)
-
     price = closes[-1]
-
     upper, mid, lower = bollinger(closes)
-
     rsi_val = rsi_vals[-1]
 
-    score_long = 0
-    score_short = 0
+    long_score = 0
+    short_score = 0
 
     if ema50[-1] > ema200[-1]:
-        score_long += 35
+        long_score += 35
     else:
-        score_short += 35
+        short_score += 35
 
     if 45 <= rsi_val <= 65:
-        score_long += 15
-        score_short += 15
+        long_score += 15
+        short_score += 15
     elif rsi_val > 65:
-        score_short += 25
+        short_score += 25
     elif rsi_val < 45:
-        score_long += 25
+        long_score += 25
 
     if price <= mid:
-        score_long += 25
+        long_score += 25
     if price >= mid:
-        score_short += 25
+        short_score += 25
 
-    if vol > 0:
-        score_long += 15
-        score_short += 15
+    long_score += 15
+    short_score += 15
 
-    return score_long, score_short, ema50, ema200, rsi_val, vol, price, mid
-
+    return long_score, short_score, ema50, ema200, rsi_val, vol, price, mid
 
 # ======================
 # PROCESS
@@ -219,15 +211,12 @@ def process(symbol):
         signal = "STRONG BUY"
     elif long_score >= 70:
         signal = "BUY"
-    elif long_score >= 50:
-        signal = "WEAK BUY"
-    else:
-        signal = "NO TRADE"
-
-    if short_score >= 85:
+    elif short_score >= 85:
         signal = "STRONG SELL"
     elif short_score >= 70:
         signal = "SELL"
+    else:
+        signal = "NO TRADE"
 
     entry = price
 
@@ -256,7 +245,7 @@ def process(symbol):
     }
 
 # ======================
-# API
+# API ENDPOINT
 # ======================
 @app.get("/dashboard/all")
 def dashboard_all():
@@ -274,7 +263,4 @@ def dashboard_all():
 
 @app.get("/")
 def home():
-    return {
-        "status": "running",
-        "model": "institutional scoring hybrid system"
-    }
+    return {"status": "running"}
