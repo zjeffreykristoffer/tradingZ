@@ -6,6 +6,9 @@ import math
 
 app = FastAPI()
 
+# ======================
+# CORS
+# ======================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = "YOUR_API_KEY"
+API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 # ======================
 # CACHE
@@ -56,10 +59,10 @@ def get_prices(symbol):
 
     return data
 
+
 # ======================
 # INDICATORS
 # ======================
-
 def ema(data, period):
     k = 2 / (period + 1)
     out = [data[0]]
@@ -117,37 +120,30 @@ def bollinger(data, period=20):
 
     return (mean + 2 * std, mean, mean - 2 * std)
 
+
 # ======================
 # SCORING ENGINE
 # ======================
 def score_trade(closes, highs, lows):
     ema50 = ema(closes, 50)
     ema200 = ema(closes, 200)
-
     rsi_vals = rsi(closes)
-
     vol = atr(highs, lows, closes)
 
     price = closes[-1]
-
     upper, mid, lower = bollinger(closes)
-
     rsi_val = rsi_vals[-1]
 
     score_long = 0
     score_short = 0
 
-    # ======================
     # TREND (35 pts)
-    # ======================
     if ema50[-1] > ema200[-1]:
         score_long += 35
     else:
         score_short += 35
 
-    # ======================
     # RSI (25 pts)
-    # ======================
     if 45 <= rsi_val <= 65:
         score_long += 15
         score_short += 15
@@ -156,17 +152,13 @@ def score_trade(closes, highs, lows):
     elif rsi_val < 45:
         score_long += 25
 
-    # ======================
     # BOLLINGER (25 pts)
-    # ======================
     if price <= mid:
         score_long += 25
     if price >= mid:
         score_short += 25
 
-    # ======================
     # VOLATILITY (15 pts)
-    # ======================
     if vol > 0:
         score_long += 15
         score_short += 15
@@ -175,7 +167,7 @@ def score_trade(closes, highs, lows):
 
 
 # ======================
-# PROCESS
+# PROCESS (SMART ENGINE)
 # ======================
 def process(symbol):
     data = get_prices(symbol)
@@ -193,24 +185,24 @@ def process(symbol):
     )
 
     # ======================
-    # SIGNAL DECISION
+    # SMART DECISION ENGINE
     # ======================
-    if long_score >= 85:
-        signal = "STRONG BUY"
-    elif long_score >= 70:
-        signal = "BUY"
-    elif long_score >= 50:
-        signal = "WEAK BUY"
-    else:
-        signal = "NO TRADE"
+    dominant_score = max(long_score, short_score)
+    direction = "LONG" if long_score > short_score else "SHORT"
+    gap = abs(long_score - short_score)
 
-    if short_score >= 85:
-        signal = "STRONG SELL"
-    elif short_score >= 70:
-        signal = "SELL"
+    signal = "NO TRADE"
+
+    if dominant_score >= 50 and gap >= 10:
+        if dominant_score >= 85:
+            signal = "STRONG BUY" if direction == "LONG" else "STRONG SELL"
+        elif dominant_score >= 70:
+            signal = "BUY" if direction == "LONG" else "SELL"
+        else:
+            signal = "WEAK BUY" if direction == "LONG" else "WEAK SELL"
 
     # ======================
-    # RISK (ATR)
+    # RISK MANAGEMENT
     # ======================
     entry = price
 
@@ -229,6 +221,7 @@ def process(symbol):
         "signal": signal,
         "long_score": long_score,
         "short_score": short_score,
+        "gap": gap,
         "entry": entry,
         "stop_loss": round(sl, 5) if sl else None,
         "take_profit": round(tp, 5) if tp else None,
@@ -237,6 +230,7 @@ def process(symbol):
         "ema50": ema50[-1],
         "ema200": ema200[-1]
     }
+
 
 # ======================
 # API
@@ -255,5 +249,7 @@ def dashboard_all():
 def home():
     return {
         "status": "running",
-        "model": "institutional scoring hybrid system"
+        "model": "institutional hybrid scoring system",
+        "timeframe": "15m",
+        "strategy": "trend + momentum + volatility with conflict resolution"
     }
