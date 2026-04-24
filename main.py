@@ -20,6 +20,12 @@ app.add_middleware(
 API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 # ======================
+# CONFIG
+# ======================
+ACCOUNT_BALANCE = 10000
+RISK_PER_TRADE = 0.01
+
+# ======================
 # CACHE
 # ======================
 cache = {}
@@ -137,13 +143,11 @@ def score_trade(closes, highs, lows):
     score_long = 0
     score_short = 0
 
-    # TREND (35 pts)
     if ema50[-1] > ema200[-1]:
         score_long += 35
     else:
         score_short += 35
 
-    # RSI (25 pts)
     if 45 <= rsi_val <= 65:
         score_long += 15
         score_short += 15
@@ -152,22 +156,34 @@ def score_trade(closes, highs, lows):
     elif rsi_val < 45:
         score_long += 25
 
-    # BOLLINGER (25 pts)
     if price <= mid:
         score_long += 25
     if price >= mid:
         score_short += 25
 
-    # VOLATILITY (15 pts)
-    if vol > 0:
-        score_long += 15
-        score_short += 15
+    score_long += 15
+    score_short += 15
 
     return score_long, score_short, ema50, ema200, rsi_val, vol, price, mid
 
 
 # ======================
-# PROCESS (SMART ENGINE)
+# LOT SIZE CALC
+# ======================
+def calculate_lot_size(balance, risk_pct, entry, stop_loss):
+    risk_amount = balance * risk_pct
+    sl_distance = abs(entry - stop_loss)
+
+    if sl_distance == 0:
+        return 0.01
+
+    lot_size = risk_amount / (sl_distance * 100000)
+
+    return round(max(0.01, min(lot_size, 10)), 2)
+
+
+# ======================
+# PROCESS ENGINE
 # ======================
 def process(symbol):
     data = get_prices(symbol)
@@ -184,26 +200,20 @@ def process(symbol):
         closes, highs, lows
     )
 
-    # ======================
-    # SMART DECISION ENGINE
-    # ======================
-    dominant_score = max(long_score, short_score)
     direction = "LONG" if long_score > short_score else "SHORT"
     gap = abs(long_score - short_score)
+    dominant = max(long_score, short_score)
 
     signal = "NO TRADE"
 
-    if dominant_score >= 50 and gap >= 10:
-        if dominant_score >= 85:
+    if dominant >= 50 and gap >= 10:
+        if dominant >= 85:
             signal = "STRONG BUY" if direction == "LONG" else "STRONG SELL"
-        elif dominant_score >= 70:
+        elif dominant >= 70:
             signal = "BUY" if direction == "LONG" else "SELL"
         else:
             signal = "WEAK BUY" if direction == "LONG" else "WEAK SELL"
 
-    # ======================
-    # RISK MANAGEMENT
-    # ======================
     entry = price
 
     if "BUY" in signal:
@@ -216,6 +226,13 @@ def process(symbol):
         sl = None
         tp = None
 
+    lot_size = calculate_lot_size(
+        ACCOUNT_BALANCE,
+        RISK_PER_TRADE,
+        entry,
+        sl
+    ) if sl else None
+
     return {
         "symbol": symbol,
         "signal": signal,
@@ -225,6 +242,8 @@ def process(symbol):
         "entry": entry,
         "stop_loss": round(sl, 5) if sl else None,
         "take_profit": round(tp, 5) if tp else None,
+        "lot_size": lot_size,
+        "risk_per_trade_usd": round(ACCOUNT_BALANCE * RISK_PER_TRADE, 2),
         "rsi": round(rsi_val, 2),
         "atr": round(vol, 5),
         "ema50": ema50[-1],
@@ -249,7 +268,5 @@ def dashboard_all():
 def home():
     return {
         "status": "running",
-        "model": "institutional hybrid scoring system",
-        "timeframe": "15m",
-        "strategy": "trend + momentum + volatility with conflict resolution"
+        "strategy": "AI scoring + ATR risk-based execution + dynamic lot sizing"
     }
