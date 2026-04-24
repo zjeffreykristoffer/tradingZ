@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = "YOUR_TWELVEDATA_KEY"
+API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 # ======================
 # SYNC STATE
