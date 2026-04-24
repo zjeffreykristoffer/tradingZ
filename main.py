@@ -6,6 +6,9 @@ import math
 
 app = FastAPI()
 
+# ======================
+# CORS
+# ======================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,12 +19,14 @@ app.add_middleware(
 
 API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
+# ======================
+# CACHE
+# ======================
 cache = {}
 CACHE_TTL = 120
 
-
 # ======================
-# FETCH
+# DATA FETCH
 # ======================
 def fetch_prices(symbol: str):
     try:
@@ -36,6 +41,7 @@ def fetch_prices(symbol: str):
         lows = [float(x["low"]) for x in r["values"]][::-1]
 
         return closes, highs, lows
+
     except:
         return None
 
@@ -116,7 +122,52 @@ def bollinger(data, period=20):
 
 
 # ======================
-# SCORING + PROCESS
+# SCORING ENGINE
+# ======================
+def score_trade(closes, highs, lows):
+    ema50 = ema(closes, 50)
+    ema200 = ema(closes, 200)
+    rsi_vals = rsi(closes)
+    vol = atr(highs, lows, closes)
+
+    price = closes[-1]
+    upper, mid, lower = bollinger(closes)
+    rsi_val = rsi_vals[-1]
+
+    score_long = 0
+    score_short = 0
+
+    # TREND (35 pts)
+    if ema50[-1] > ema200[-1]:
+        score_long += 35
+    else:
+        score_short += 35
+
+    # RSI (25 pts)
+    if 45 <= rsi_val <= 65:
+        score_long += 15
+        score_short += 15
+    elif rsi_val > 65:
+        score_short += 25
+    elif rsi_val < 45:
+        score_long += 25
+
+    # BOLLINGER (25 pts)
+    if price <= mid:
+        score_long += 25
+    if price >= mid:
+        score_short += 25
+
+    # VOLATILITY (15 pts)
+    if vol > 0:
+        score_long += 15
+        score_short += 15
+
+    return score_long, score_short, ema50, ema200, rsi_val, vol, price, mid
+
+
+# ======================
+# PROCESS (SMART ENGINE)
 # ======================
 def process(symbol):
     data = get_prices(symbol)
@@ -129,67 +180,38 @@ def process(symbol):
     if len(closes) < 60:
         return {"symbol": symbol, "signal": "INSUFFICIENT_DATA"}
 
-    ema50 = ema(closes, 50)
-    ema200 = ema(closes, 200)
-    rsi_vals = rsi(closes)
-    vol = atr(highs, lows, closes)
-    price = closes[-1]
-    upper, mid, lower = bollinger(closes)
-    rsi_val = rsi_vals[-1]
-
-    long_score = 0
-    short_score = 0
-
-    # TREND
-    if ema50[-1] > ema200[-1]:
-        long_score += 35
-    else:
-        short_score += 35
-
-    # RSI
-    if 45 <= rsi_val <= 65:
-        long_score += 15
-        short_score += 15
-    elif rsi_val > 65:
-        short_score += 25
-    elif rsi_val < 45:
-        long_score += 25
-
-    # BOLLINGER
-    if price <= mid:
-        long_score += 25
-    if price >= mid:
-        short_score += 25
-
-    # VOLATILITY
-    if vol > 0:
-        long_score += 15
-        short_score += 15
+    long_score, short_score, ema50, ema200, rsi_val, vol, price, mid = score_trade(
+        closes, highs, lows
+    )
 
     # ======================
-    # DECISION FIX
+    # SMART DECISION ENGINE
     # ======================
-    dominant = max(long_score, short_score)
+    dominant_score = max(long_score, short_score)
     direction = "LONG" if long_score > short_score else "SHORT"
     gap = abs(long_score - short_score)
 
     signal = "NO TRADE"
 
-    if dominant >= 50 and gap >= 10:
-        if dominant >= 85:
+    if dominant_score >= 50 and gap >= 10:
+        if dominant_score >= 85:
             signal = "STRONG BUY" if direction == "LONG" else "STRONG SELL"
-        elif dominant >= 70:
+        elif dominant_score >= 70:
             signal = "BUY" if direction == "LONG" else "SELL"
         else:
             signal = "WEAK BUY" if direction == "LONG" else "WEAK SELL"
 
-    # RISK
+    # ======================
+    # RISK MANAGEMENT
+    # ======================
+    entry = price
+
     if "BUY" in signal:
-        sl = price - vol * 1.5
-        tp = price + vol * 2.2
+        sl = entry - vol * 1.5
+        tp = entry + vol * 2.2
     elif "SELL" in signal:
-        sl = price + vol * 1.5
-        tp = price - vol * 2.2
+        sl = entry + vol * 1.5
+        tp = entry - vol * 2.2
     else:
         sl = None
         tp = None
@@ -199,15 +221,20 @@ def process(symbol):
         "signal": signal,
         "long_score": long_score,
         "short_score": short_score,
-        "entry": price,
+        "gap": gap,
+        "entry": entry,
         "stop_loss": round(sl, 5) if sl else None,
         "take_profit": round(tp, 5) if tp else None,
         "rsi": round(rsi_val, 2),
         "atr": round(vol, 5),
-        "timestamp": int(time())  # ✅ FIX
+        "ema50": ema50[-1],
+        "ema200": ema200[-1]
     }
 
 
+# ======================
+# API
+# ======================
 @app.get("/dashboard/all")
 def dashboard_all():
     return {
@@ -215,4 +242,14 @@ def dashboard_all():
         "GBPUSD": process("GBP/USD"),
         "USDCAD": process("USD/CAD"),
         "GOLD": process("XAU/USD")
+    }
+
+
+@app.get("/")
+def home():
+    return {
+        "status": "running",
+        "model": "institutional hybrid scoring system",
+        "timeframe": "15m",
+        "strategy": "trend + momentum + volatility with conflict resolution"
     }
