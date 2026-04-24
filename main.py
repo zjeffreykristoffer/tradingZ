@@ -160,7 +160,9 @@ def process(symbol):
 def dashboard_all():
     return {
         "EURUSD": process("EUR/USD"),
-        "GOLD": process("XAU/USD")
+        "GOLD": process("XAU/USD"),
+        "GBPUSD": process("GBP/USD"),
+        "USDCAD": process("USD/CAD")
     }
 
 # ======================
