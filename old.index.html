@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Trading Dashboard</title>
+
+    <style>
+        body {
+            font-family: Arial;
+            background: #0f172a;
+            color: white;
+            text-align: center;
+            margin: 0;
+        }
+
+        h1 { margin: 20px 0; }
+
+        #syncBox {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #1e293b;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+        }
+
+        #syncTimer { color: #22c55e; font-weight: bold; }
+
+        #dashboard {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            width: 90%;
+            margin: auto;
+        }
+
+        .card {
+            background: #1e293b;
+            padding: 15px;
+            border-radius: 12px;
+        }
+
+        td {
+            padding: 6px;
+            border-bottom: 1px solid #334155;
+        }
+    </style>
+</head>
+
+<body>
+
+<h1>📊 Trading Dashboard</h1>
+
+<div id="syncBox">
+    ⏱ Next sync: <span id="syncTimer">--</span>s
+    <br>
+    🕒 Last: <span id="lastUpdate">-</span>
+</div>
+
+<div id="dashboard">Loading...</div>
+
+<script>
+
+const API = "https://tradingz.onrender.com";
+
+let nextSyncTime = null;
+let lastUpdateTime = null;
+let countdown = 0;
+
+function render(data) {
+    const el = document.getElementById("dashboard");
+
+    const assets = ["EURUSD","GBPUSD","USDCAD","GOLD"];
+
+    el.innerHTML = assets.map(a => {
+        const d = data[a];
+        if (!d) return `<div class="card">No data</div>`;
+
+        return `
+        <div class="card">
+            <h3>${a}</h3>
+            <div>Signal: ${d.signal}</div>
+            <div>Entry: ${d.entry}</div>
+            <div>SL: ${d.stop_loss}</div>
+            <div>TP: ${d.take_profit}</div>
+        </div>`;
+    }).join("");
+}
+
+async function load() {
+    const res = await fetch(`${API}/dashboard/all`);
+    const data = await res.json();
+
+    render(data);
+
+    if (data.meta?.next_sync) {
+        nextSyncTime = new Date(data.meta.next_sync);
+    }
+
+    if (data.meta?.last_sync) {
+        lastUpdateTime = new Date(data.meta.last_sync).toLocaleTimeString();
+    }
+
+    updateUI();
+}
+
+function updateUI() {
+    if (nextSyncTime) {
+        countdown = Math.max(0, Math.floor((nextSyncTime - new Date()) / 1000));
+    }
+
+    document.getElementById("syncTimer").innerText = countdown;
+    document.getElementById("lastUpdate").innerText = lastUpdateTime || "-";
+}
+
+setInterval(load, 60000);
+setInterval(updateUI, 1000);
+
+load();
+
+</script>
+
+</body>
+</html>
