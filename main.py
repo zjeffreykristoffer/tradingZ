@@ -238,9 +238,9 @@ def process(symbol):
 @app.get("/dashboard/all")
 def dashboard_all():
     return {
-        "EURUSD": process("EUR/USD"),
-        "GBPUSD": process("GBP/USD"),
-        "USDCAD": process("USD/CAD"),
+        #"EURUSD": process("EUR/USD"),
+        #"GBPUSD": process("GBP/USD"),
+        #"USDCAD": process("USD/CAD"),
         "GOLD": process("XAU/USD")
     }
 
