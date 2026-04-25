@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import requests
 from time import time
 import math
+import numpy as np
 
 app = FastAPI()
 
@@ -25,12 +26,13 @@ API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 cache = {}
 CACHE_TTL = 120
 
+
 # ======================
 # DATA FETCH
 # ======================
-def fetch_prices(symbol: str):
+def fetch_prices(symbol: str, interval="15min"):
     try:
-        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=100&apikey={API_KEY}"
+        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize=500&apikey={API_KEY}"
         r = requests.get(url, timeout=10).json()
 
         if "values" not in r:
@@ -46,59 +48,64 @@ def fetch_prices(symbol: str):
         return None
 
 
-def get_prices(symbol):
+def get_prices(symbol, interval="15min"):
     now = time()
+    key = f"{symbol}_{interval}"
 
-    if symbol in cache and now - cache[symbol]["time"] < CACHE_TTL:
-        return cache[symbol]["data"]
+    if key in cache and now - cache[key]["time"] < CACHE_TTL:
+        return cache[key]["data"]
 
-    data = fetch_prices(symbol)
+    data = fetch_prices(symbol, interval)
 
     if data:
-        cache[symbol] = {"data": data, "time": now}
+        cache[key] = {"data": data, "time": now}
 
     return data
 
 
 # ======================
-# INDICATORS
+# INDICATORS (FIXED)
 # ======================
+
 def ema(data, period):
+    if len(data) < period:
+        return data
+
     k = 2 / (period + 1)
     out = [data[0]]
-    for p in data[1:]:
-        out.append(p * k + out[-1] * (1 - k))
+
+    for price in data[1:]:
+        out.append(price * k + out[-1] * (1 - k))
+
     return out
 
 
 def rsi(data, period=14):
-    if len(data) < period + 1:
+    if len(data) <= period:
         return [50] * len(data)
 
-    gains, losses = [], []
+    deltas = np.diff(data)
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
 
-    for i in range(1, len(data)):
-        diff = data[i] - data[i - 1]
-        gains.append(max(diff, 0))
-        losses.append(abs(min(diff, 0)))
+    avg_gain = np.mean(gains[:period])
+    avg_loss = np.mean(losses[:period])
 
-    rsis = []
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
+    rsis = [50] * period
 
-    for i in range(period, len(data)):
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+
         rs = avg_gain / (avg_loss + 1e-9)
         rsis.append(100 - (100 / (1 + rs)))
 
-        if i < len(data) - 1:
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-
-    return [50] * period + rsis
+    return rsis
 
 
 def atr(high, low, close, period=14):
     trs = []
+
     for i in range(1, len(close)):
         tr = max(
             high[i] - low[i],
@@ -107,28 +114,50 @@ def atr(high, low, close, period=14):
         )
         trs.append(tr)
 
-    return sum(trs[-period:]) / period if len(trs) >= period else sum(trs) / len(trs)
+    if len(trs) < period:
+        return np.mean(trs)
+
+    atr_val = np.mean(trs[:period])
+
+    for i in range(period, len(trs)):
+        atr_val = (atr_val * (period - 1) + trs[i]) / period
+
+    return atr_val
 
 
 def bollinger(data, period=20):
     if len(data) < period:
-        return (data[-1], data[-1], data[-1])
+        return data[-1], data[-1], data[-1]
 
     window = data[-period:]
-    mean = sum(window) / period
-    std = math.sqrt(sum((x - mean) ** 2 for x in window) / period)
+    mean = np.mean(window)
+    std = np.std(window)
 
-    return (mean + 2 * std, mean, mean - 2 * std)
+    upper = mean + 2 * std
+    lower = mean - 2 * std
+
+    return upper, mean, lower
 
 
 # ======================
-# SCORING ENGINE
+# SAFE PROBABILITY
+# ======================
+def safe_prob(long_score, short_score):
+    total = long_score + short_score
+    if total == 0:
+        return 0.5, 0.5
+
+    return long_score / total, short_score / total
+
+
+# ======================
+# SCORING ENGINE (FIXED)
 # ======================
 def score_trade(closes, highs, lows):
     ema50 = ema(closes, 50)
     ema200 = ema(closes, 200)
     rsi_vals = rsi(closes)
-    vol = atr(highs, lows, closes)
+    atr_val = atr(highs, lows, closes)
 
     price = closes[-1]
     upper, mid, lower = bollinger(closes)
@@ -137,119 +166,108 @@ def score_trade(closes, highs, lows):
     score_long = 0
     score_short = 0
 
-    # TREND (35 pts)
+    # TREND
     if ema50[-1] > ema200[-1]:
         score_long += 35
     else:
         score_short += 35
 
-    # RSI (25 pts)
-    if 45 <= rsi_val <= 65:
-        score_long += 15
-        score_short += 15
-    elif rsi_val > 65:
-        score_short += 25
-    elif rsi_val < 45:
+    # RSI (clean logic)
+    if rsi_val < 40:
         score_long += 25
-
-    # BOLLINGER (25 pts)
-    if price <= mid:
-        score_long += 25
-    if price >= mid:
+    elif rsi_val > 60:
         score_short += 25
-
-    # VOLATILITY (15 pts)
-    if vol > 0:
-        score_long += 15
-        score_short += 15
-
-    return score_long, score_short, ema50, ema200, rsi_val, vol, price, mid
-
-
-# ======================
-# PROCESS (SMART ENGINE)
-# ======================
-def process(symbol):
-    data = get_prices(symbol)
-
-    if not data:
-        return {"symbol": symbol, "signal": "NO_DATA"}
-
-    closes, highs, lows = data
-
-    if len(closes) < 60:
-        return {"symbol": symbol, "signal": "INSUFFICIENT_DATA"}
-
-    long_score, short_score, ema50, ema200, rsi_val, vol, price, mid = score_trade(
-        closes, highs, lows
-    )
-
-    # ======================
-    # SMART DECISION ENGINE
-    # ======================
-    dominant_score = max(long_score, short_score)
-    direction = "LONG" if long_score > short_score else "SHORT"
-    gap = abs(long_score - short_score)
-
-    signal = "NO TRADE"
-
-    if dominant_score >= 50 and gap >= 10:
-        if dominant_score >= 85:
-            signal = "STRONG BUY" if direction == "LONG" else "STRONG SELL"
-        elif dominant_score >= 70:
-            signal = "BUY" if direction == "LONG" else "SELL"
-        else:
-            signal = "WEAK BUY" if direction == "LONG" else "WEAK SELL"
-
-    # ======================
-    # RISK MANAGEMENT
-    # ======================
-    entry = price
-
-    if "BUY" in signal:
-        sl = entry - vol * 1.5
-        tp = entry + vol * 2.2
-    elif "SELL" in signal:
-        sl = entry + vol * 1.5
-        tp = entry - vol * 2.2
     else:
-        sl = None
-        tp = None
+        score_long += 10
+        score_short += 10
+
+    # Bollinger (fixed structure)
+    if price < lower:
+        score_long += 30
+    elif price > upper:
+        score_short += 30
+    elif price <= mid:
+        score_long += 10
+    else:
+        score_short += 10
+
+    return score_long, score_short, ema50, ema200, rsi_val, atr_val, price, mid
+
+
+# ======================
+# MULTI-TIMEFRAME ENGINE
+# ======================
+def process(symbol, intervals=["15min", "1h", "4h", "1day"]):
+
+    weights = {
+        "15min": 0.2,
+        "1h": 0.3,
+        "4h": 0.25,
+        "1day": 0.25
+    }
+
+    combined_long = 0
+    combined_short = 0
+    results = {}
+
+    for interval in intervals:
+        data = get_prices(symbol, interval)
+        if not data:
+            continue
+
+        closes, highs, lows = data
+
+        if len(closes) < 60:
+            continue
+
+        long_score, short_score, ema50, ema200, rsi_val, atr_val, price, mid = score_trade(
+            closes, highs, lows
+        )
+
+        prob_long, prob_short = safe_prob(long_score, short_score)
+
+        combined_long += prob_long * weights[interval]
+        combined_short += prob_short * weights[interval]
+
+        results[interval] = {
+            "signal": "LONG" if prob_long > prob_short else "SHORT",
+            "rsi": round(rsi_val, 2),
+            "ema50": ema50[-1],
+            "ema200": ema200[-1],
+            "atr": round(atr_val, 5)
+        }
+
+    confidence_gap = abs(combined_long - combined_short)
+
+    final_signal = "NO TRADE"
+
+    # FINAL DECISION RULE (statistically safe)
+    if confidence_gap > 0.20 and max(combined_long, combined_short) > 0.55:
+        final_signal = "BUY" if combined_long > combined_short else "SELL"
 
     return {
         "symbol": symbol,
-        "signal": signal,
-        "long_score": long_score,
-        "short_score": short_score,
-        "gap": gap,
-        "entry": entry,
-        "stop_loss": round(sl, 5) if sl else None,
-        "take_profit": round(tp, 5) if tp else None,
-        "rsi": round(rsi_val, 2),
-        "atr": round(vol, 5),
-        "ema50": ema50[-1],
-        "ema200": ema200[-1]
+        "final_signal": final_signal,
+        "prob_long": round(combined_long * 100, 2),
+        "prob_short": round(combined_short * 100, 2),
+        "confidence_gap": round(confidence_gap, 3),
+        "timeframes": results
     }
 
 
 # ======================
-# API
+# API ENDPOINT
 # ======================
-@app.get("/dashboard/all")
-def dashboard_all():
-    return {
-        #"EURUSD": process("EUR/USD"),
-        #"GBPUSD": process("GBP/USD"),
-        #"USDCAD": process("USD/CAD"),
-        "GOLD": process("XAU/USD")
-    }
+@app.get("/process/{symbol}")
+def process_route(symbol: str):
+    return process(symbol)
 
 
 @app.get("/")
 def home():
     return {
         "status": "running",
-        "model": "institutional hybrid scoring system",
-        "timeframe": "15m",
-        "strategy": "trend + momentum + volatility with conflict resolution"
+        "model": "fixed multi-timeframe probabilistic trading engine",
+        "logic": "EMA + RSI + BB + ATR with regime-filter style scoring",
+        "timeframe": "15m / 1h / 4h / 1D"
     }
