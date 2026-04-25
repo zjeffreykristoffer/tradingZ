@@ -370,6 +370,7 @@ def dashboard_all():
         # "EURUSD": process("EUR/USD"),
         # "GBPUSD": process("GBP/USD"),
         # "USDCAD": process("USD/CAD"),
+        # "NZDUSD": process("NZD/USD"),
         "GOLD": process("XAU/USD"),
     }
 
