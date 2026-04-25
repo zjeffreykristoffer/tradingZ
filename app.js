@@ -1,4 +1,4 @@
-const API = "https://your-backend.onrender.com"; // 🔴 replace this
+const API = "https://tradingz.onrender.com"; // 🔴 replace this
 
 async function load() {
   try {
