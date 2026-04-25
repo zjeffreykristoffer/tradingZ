@@ -1,0 +1,37 @@
+body {
+  margin: 0;
+  background: #0a0a0a;
+  color: white;
+  font-family: Arial;
+}
+
+.container {
+  padding: 40px;
+}
+
+.card {
+  background: #111;
+  padding: 20px;
+  border-radius: 10px;
+  max-width: 400px;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.badge {
+  padding: 10px;
+  text-align: center;
+  border-radius: 8px;
+  margin: 10px 0;
+}
+
+.center {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
