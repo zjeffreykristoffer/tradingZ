@@ -367,7 +367,7 @@ def process(symbol: str) -> dict:
 @app.get("/dashboard/all")
 def dashboard_all():
     return {
-        "EURUSD": process("EUR/USD"),
+        # "EURUSD": process("EUR/USD"),
         # "GBPUSD": process("GBP/USD"),
         # "USDCAD": process("USD/CAD"),
         "NZDUSD": process("NZD/USD"),
