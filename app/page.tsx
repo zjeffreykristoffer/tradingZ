@@ -37,34 +37,38 @@ export default function Home() {
     return <div className="center">Loading...</div>;
   }
 
-  const gold = data.GOLD;
-
-  // ✅ ONLY hide when NO TRADE
-  const hasTrade = gold.signal !== "NO TRADE";
+  // ✅ Convert all pairs into array
+  const assets = Object.values(data);
 
   return (
     <div className="container">
       <h1>📊 Trading Dashboard</h1>
 
-      <div className="card">
-        <h2>{gold.symbol}</h2>
+      {assets.map((asset: any, index: number) => {
+        const hasTrade = asset.signal !== "NO TRADE";
 
-        <SignalBadge signal={gold.signal} />
+        return (
+          <div className="card" key={index}>
+            <h2>{asset.symbol}</h2>
 
-        {/* ✅ Shows for WEAK + STRONG trades */}
-        {hasTrade && (
-          <>
-            <Row label="Entry" value={gold.entry} />
-            <Row label="Stop Loss" value={gold.stop_loss} />
-            <Row label="Take Profit" value={gold.take_profit} />
-          </>
-        )}
+            <SignalBadge signal={asset.signal} />
 
-        <Row label="RSI" value={gold.rsi} />
-        <Row label="ATR" value={gold.atr} />
-        <Row label="EMA50" value={gold.ema50} />
-        <Row label="EMA200" value={gold.ema200} />
-      </div>
+            {/* ✅ Show for ALL trades except NO TRADE */}
+            {hasTrade && (
+              <>
+                <Row label="Entry" value={asset.entry} />
+                <Row label="Stop Loss" value={asset.stop_loss} />
+                <Row label="Take Profit" value={asset.take_profit} />
+              </>
+            )}
+
+            <Row label="RSI" value={asset.rsi} />
+            <Row label="ATR" value={asset.atr} />
+            <Row label="EMA50" value={asset.ema50} />
+            <Row label="EMA200" value={asset.ema200} />
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -81,8 +85,11 @@ function Row({ label, value }: any) {
 function SignalBadge({ signal }: any) {
   let color = "#666";
 
-  if (signal.includes("BUY")) color = "green";
-  if (signal.includes("SELL")) color = "red";
+  if (signal.includes("STRONG BUY")) color = "darkgreen";
+  else if (signal.includes("BUY")) color = "green";
+  else if (signal.includes("STRONG SELL")) color = "darkred";
+  else if (signal.includes("SELL")) color = "red";
+  else if (signal.includes("WEAK")) color = "orange";
 
   return (
     <div style={{ background: color }} className="badge">
