@@ -39,9 +39,6 @@ export default function Home() {
 
   const gold = data.GOLD;
 
-  const hasTrade =
-  gold.signal.includes("BUY") || gold.signal.includes("SELL");
-
   return (
     <div className="container">
       <h1>📊 Trading Dashboard</h1>
@@ -51,14 +48,10 @@ export default function Home() {
 
         <SignalBadge signal={gold.signal} />
 
-        {hasTrade && (
-  <>
-    <Row label="Entry" value={gold.entry} />
-    <Row label="Stop Loss" value={gold.stop_loss} />
-    <Row label="Take Profit" value={gold.take_profit} />
-  </>
-)}
-
+      
+        <Row label="Entry" value={gold.entry} />
+        <Row label="Stop Loss" value={gold.stop_loss} />
+        <Row label="Take Profit" value={gold.take_profit} />
         <Row label="RSI" value={gold.rsi} />
         <Row label="ATR" value={gold.atr} />
         <Row label="EMA50" value={gold.ema50} />
