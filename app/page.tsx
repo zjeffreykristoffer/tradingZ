@@ -39,6 +39,9 @@ export default function Home() {
 
   const gold = data.GOLD;
 
+  // ✅ ONLY hide when NO TRADE
+  const hasTrade = gold.signal !== "NO TRADE";
+
   return (
     <div className="container">
       <h1>📊 Trading Dashboard</h1>
@@ -48,10 +51,15 @@ export default function Home() {
 
         <SignalBadge signal={gold.signal} />
 
-      
-        <Row label="Entry" value={gold.entry} />
-        <Row label="Stop Loss" value={gold.stop_loss} />
-        <Row label="Take Profit" value={gold.take_profit} />
+        {/* ✅ Shows for WEAK + STRONG trades */}
+        {hasTrade && (
+          <>
+            <Row label="Entry" value={gold.entry} />
+            <Row label="Stop Loss" value={gold.stop_loss} />
+            <Row label="Take Profit" value={gold.take_profit} />
+          </>
+        )}
+
         <Row label="RSI" value={gold.rsi} />
         <Row label="ATR" value={gold.atr} />
         <Row label="EMA50" value={gold.ema50} />
