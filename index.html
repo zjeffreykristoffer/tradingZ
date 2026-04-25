@@ -1,49 +1,23 @@
-import { useEffect, useState } from "react";
-import axios from "axios";
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Trading Dashboard</title>
+</head>
 
-const API = "https://YOUR-RENDER-URL.onrender.com";
+<body style="font-family: Arial; padding:20px;">
+  <h1>📊 Trading Dashboard</h1>
 
-function App() {
-  const [data, setData] = useState(null);
+  <h2 id="balance">Balance: ...</h2>
+  <h3 id="signal">Signal: ...</h3>
+  <h3 id="price">Price: ...</h3>
 
-  const load = async () => {
-    try {
-      const res = await axios.get(`${API}/trade/BTCUSD`);
-      setData(res.data);
-    } catch (e) {
-      console.log(e);
-    }
-  };
+  <div id="trade"></div>
 
-  useEffect(() => {
-    load();
-    const i = setInterval(load, 5000);
-    return () => clearInterval(i);
-  }, []);
+  <h3 id="winrate"></h3>
+  <h3 id="wins"></h3>
+  <h3 id="losses"></h3>
 
-  if (!data) return <h2>Loading...</h2>;
-
-  return (
-    <div style={{ padding: 20 }}>
-      <h1>📊 Trading Dashboard</h1>
-
-      <h2>Balance: ${data.balance}</h2>
-      <h3>Signal: {data.signal}</h3>
-      <h3>Price: {data.price}</h3>
-
-      {data.trade && (
-        <>
-          <h3>Entry: {data.trade.entry.toFixed(2)}</h3>
-          <h3>TP: {data.trade.tp.toFixed(2)}</h3>
-          <h3>SL: {data.trade.sl.toFixed(2)}</h3>
-        </>
-      )}
-
-      <h3>Winrate: {data.winrate}%</h3>
-      <h3>Wins: {data.wins}</h3>
-      <h3>Losses: {data.losses}</h3>
-    </div>
-  );
-}
-
-export default App;
+  <!-- ✅ LINK YOUR JS FILE -->
+  <script src="app.js"></script>
+</body>
+</html>
