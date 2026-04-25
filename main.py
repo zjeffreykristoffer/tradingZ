@@ -1,9 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import requests, numpy as np, os
+import requests
+from time import time
+import math
 
 app = FastAPI()
 
+# ======================
+# CORS
+# ======================
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -12,160 +17,239 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-API_KEY = os.getenv("6dc5d1c5200546a697bebfb1672702ac")
+API_KEY = "6dc5d1c5200546a697bebfb1672702ac"
 
 # ======================
-# STATE (in-memory)
+# CACHE
 # ======================
-account = {"balance": 1000.0, "risk": 0.02}
-trades = []
+cache = {}
+CACHE_TTL = 120
 
 # ======================
-# FETCH DATA
+# DATA FETCH
 # ======================
-def fetch(symbol):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=200&apikey={API_KEY}"
-    r = requests.get(url, timeout=10).json()
+def fetch_prices(symbol: str):
+    try:
+        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=100&apikey={API_KEY}"
+        r = requests.get(url, timeout=10).json()
 
-    if "values" not in r:
+        if "values" not in r:
+            return None
+
+        closes = [float(x["close"]) for x in r["values"]][::-1]
+        highs = [float(x["high"]) for x in r["values"]][::-1]
+        lows = [float(x["low"]) for x in r["values"]][::-1]
+
+        return closes, highs, lows
+
+    except:
         return None
 
-    closes = [float(x["close"]) for x in r["values"]][::-1]
-    highs = [float(x["high"]) for x in r["values"]][::-1]
-    lows = [float(x["low"]) for x in r["values"]][::-1]
 
-    return closes, highs, lows
+def get_prices(symbol):
+    now = time()
+
+    if symbol in cache and now - cache[symbol]["time"] < CACHE_TTL:
+        return cache[symbol]["data"]
+
+    data = fetch_prices(symbol)
+
+    if data:
+        cache[symbol] = {"data": data, "time": now}
+
+    return data
+
 
 # ======================
 # INDICATORS
 # ======================
-def ema(d,p):
-    k=2/(p+1); out=[d[0]]
-    for x in d[1:]: out.append(x*k+out[-1]*(1-k))
+def ema(data, period):
+    k = 2 / (period + 1)
+    out = [data[0]]
+    for p in data[1:]:
+        out.append(p * k + out[-1] * (1 - k))
     return out
 
-def rsi(d,p=14):
-    deltas=np.diff(d)
-    gains=np.where(deltas>0,deltas,0)
-    losses=np.where(deltas<0,-deltas,0)
-    ag,al=np.mean(gains[:p]),np.mean(losses[:p])
-    rsis=[50]*p
-    for i in range(p,len(gains)):
-        ag=(ag*(p-1)+gains[i])/p
-        al=(al*(p-1)+losses[i])/p
-        rs=ag/(al+1e-9)
-        rsis.append(100-(100/(1+rs)))
-    return rsis
 
-def atr(h,l,c,p=14):
-    trs=[max(h[i]-l[i],abs(h[i]-c[i-1]),abs(l[i]-c[i-1])) for i in range(1,len(c))]
-    return np.mean(trs[-p:])
+def rsi(data, period=14):
+    if len(data) < period + 1:
+        return [50] * len(data)
+
+    gains, losses = [], []
+
+    for i in range(1, len(data)):
+        diff = data[i] - data[i - 1]
+        gains.append(max(diff, 0))
+        losses.append(abs(min(diff, 0)))
+
+    rsis = []
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+
+    for i in range(period, len(data)):
+        rs = avg_gain / (avg_loss + 1e-9)
+        rsis.append(100 - (100 / (1 + rs)))
+
+        if i < len(data) - 1:
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+
+    return [50] * period + rsis
+
+
+def atr(high, low, close, period=14):
+    trs = []
+    for i in range(1, len(close)):
+        tr = max(
+            high[i] - low[i],
+            abs(high[i] - close[i - 1]),
+            abs(low[i] - close[i - 1])
+        )
+        trs.append(tr)
+
+    return sum(trs[-period:]) / period if len(trs) >= period else sum(trs) / len(trs)
+
+
+def bollinger(data, period=20):
+    if len(data) < period:
+        return (data[-1], data[-1], data[-1])
+
+    window = data[-period:]
+    mean = sum(window) / period
+    std = math.sqrt(sum((x - mean) ** 2 for x in window) / period)
+
+    return (mean + 2 * std, mean, mean - 2 * std)
+
 
 # ======================
-# SIGNAL
+# SCORING ENGINE
 # ======================
-def signal(closes, highs, lows):
-    e50=ema(closes,50)[-1]
-    e200=ema(closes,200)[-1]
-    r=rsi(closes)[-1]
-    a=atr(highs,lows,closes)
-    price=closes[-1]
+def score_trade(closes, highs, lows):
+    ema50 = ema(closes, 50)
+    ema200 = ema(closes, 200)
+    rsi_vals = rsi(closes)
+    vol = atr(highs, lows, closes)
 
-    long=0; short=0
+    price = closes[-1]
+    upper, mid, lower = bollinger(closes)
+    rsi_val = rsi_vals[-1]
 
-    if e50>e200: long+=1
-    else: short+=1
+    score_long = 0
+    score_short = 0
 
-    if r<40: long+=1
-    elif r>60: short+=1
-
-    if long>short: s="BUY"
-    elif short>long: s="SELL"
-    else: s="NONE"
-
-    return s, price, a
-
-# ======================
-# TRADE ENGINE
-# ======================
-def open_trade(sig, price, atr):
-    risk_amt = account["balance"] * account["risk"]
-
-    if sig=="BUY":
-        sl = price - atr*1.5
-        tp = price + atr*3
-    elif sig=="SELL":
-        sl = price + atr*1.5
-        tp = price - atr*3
+    # TREND (35 pts)
+    if ema50[-1] > ema200[-1]:
+        score_long += 35
     else:
-        return None
+        score_short += 35
 
-    size = risk_amt / abs(price - sl)
+    # RSI (25 pts)
+    if 45 <= rsi_val <= 65:
+        score_long += 15
+        score_short += 15
+    elif rsi_val > 65:
+        score_short += 25
+    elif rsi_val < 45:
+        score_long += 25
 
-    t={
-        "signal":sig,
-        "entry":price,
-        "tp":tp,
-        "sl":sl,
-        "size":size,
-        "open":True
+    # BOLLINGER (25 pts)
+    if price <= mid:
+        score_long += 25
+    if price >= mid:
+        score_short += 25
+
+    # VOLATILITY (15 pts)
+    if vol > 0:
+        score_long += 15
+        score_short += 15
+
+    return score_long, score_short, ema50, ema200, rsi_val, vol, price, mid
+
+
+# ======================
+# PROCESS (SMART ENGINE)
+# ======================
+def process(symbol):
+    data = get_prices(symbol)
+
+    if not data:
+        return {"symbol": symbol, "signal": "NO_DATA"}
+
+    closes, highs, lows = data
+
+    if len(closes) < 60:
+        return {"symbol": symbol, "signal": "INSUFFICIENT_DATA"}
+
+    long_score, short_score, ema50, ema200, rsi_val, vol, price, mid = score_trade(
+        closes, highs, lows
+    )
+
+    # ======================
+    # SMART DECISION ENGINE
+    # ======================
+    dominant_score = max(long_score, short_score)
+    direction = "LONG" if long_score > short_score else "SHORT"
+    gap = abs(long_score - short_score)
+
+    signal = "NO TRADE"
+
+    if dominant_score >= 50 and gap >= 10:
+        if dominant_score >= 85:
+            signal = "STRONG BUY" if direction == "LONG" else "STRONG SELL"
+        elif dominant_score >= 70:
+            signal = "BUY" if direction == "LONG" else "SELL"
+        else:
+            signal = "WEAK BUY" if direction == "LONG" else "WEAK SELL"
+
+    # ======================
+    # RISK MANAGEMENT
+    # ======================
+    entry = price
+
+    if "BUY" in signal:
+        sl = entry - vol * 1.5
+        tp = entry + vol * 2.2
+    elif "SELL" in signal:
+        sl = entry + vol * 1.5
+        tp = entry - vol * 2.2
+    else:
+        sl = None
+        tp = None
+
+    return {
+        "symbol": symbol,
+        "signal": signal,
+        "long_score": long_score,
+        "short_score": short_score,
+        "gap": gap,
+        "entry": entry,
+        "stop_loss": round(sl, 5) if sl else None,
+        "take_profit": round(tp, 5) if tp else None,
+        "rsi": round(rsi_val, 2),
+        "atr": round(vol, 5),
+        "ema50": ema50[-1],
+        "ema200": ema200[-1]
     }
-    trades.append(t)
-    return t
 
-def update(price):
-    for t in trades:
-        if not t["open"]: continue
-
-        if t["signal"]=="BUY":
-            if price>=t["tp"]:
-                account["balance"] += (t["tp"]-t["entry"])*t["size"]
-                t["open"]=False
-            elif price<=t["sl"]:
-                account["balance"] -= (t["entry"]-t["sl"])*t["size"]
-                t["open"]=False
-
-        if t["signal"]=="SELL":
-            if price<=t["tp"]:
-                account["balance"] += (t["entry"]-t["tp"])*t["size"]
-                t["open"]=False
-            elif price>=t["sl"]:
-                account["balance"] -= (t["sl"]-t["entry"])*t["size"]
-                t["open"]=False
 
 # ======================
 # API
 # ======================
+@app.get("/dashboard/all")
+def dashboard_all():
+    return {
+        #"EURUSD": process("EUR/USD"),
+        #"GBPUSD": process("GBP/USD"),
+        #"USDCAD": process("USD/CAD"),
+        "GOLD": process("XAU/USD")
+    }
+
+
 @app.get("/")
 def home():
-    return {"status":"running"}
-
-@app.get("/trade/{symbol}")
-def trade(symbol:str):
-    data=fetch(symbol)
-    if not data:
-        return {"error":"no data"}
-
-    c,h,l=data
-    sig,price,atr_val = signal(c,h,l)
-
-    update(price)
-
-    t=None
-    if sig!="NONE":
-        t=open_trade(sig,price,atr_val)
-
-    closed=[x for x in trades if not x["open"]]
-    wins=len([x for x in closed if (x["signal"]=="BUY" and x["tp"]>x["entry"]) or (x["signal"]=="SELL" and x["tp"]<x["entry"])])
-    losses=len(closed)-wins
-    wr=(wins/(wins+losses))*100 if (wins+losses)>0 else 0
-
     return {
-        "balance":round(account["balance"],2),
-        "signal":sig,
-        "price":round(price,2),
-        "trade":t,
-        "wins":wins,
-        "losses":losses,
-        "winrate":round(wr,2)
+        "status": "running",
+        "model": "institutional hybrid scoring system",
+        "timeframe": "15m",
+        "strategy": "trend + momentum + volatility with conflict resolution"
     }
