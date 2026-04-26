@@ -6,118 +6,136 @@ export default function Home() {
   const [data, setData] = useState<any>(null);
   const [meta, setMeta] = useState<any>(null);
   const [countdown, setCountdown] = useState(0);
-  const [history, setHistory] = useState<any[]>([]);
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
+  const [error, setError] = useState(false);
 
-  const API = process.env.NEXT_PUBLIC_API_URL;
+  const API_URL = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/all`;
 
   const fetchData = async () => {
-    const res = await fetch(`${API}/dashboard/all`, { cache: "no-store" });
-    const json = await res.json();
+    try {
+      const res = await fetch(API_URL, { cache: "no-store" });
 
-    setData(json.data);
-    setMeta(json.meta);
-    setCountdown(json.meta.next_sync);
-  };
+      if (!res.ok) throw new Error("API error");
 
-  const fetchHistory = async () => {
-    let url = `${API}/history?start=${start}&end=${end}`;
-    const res = await fetch(url);
-    const json = await res.json();
-    setHistory(json.data);
+      const json = await res.json();
+
+      setData(json.data);
+      setMeta(json.meta);
+      setCountdown(json.meta.next_sync);
+
+      setError(false);
+    } catch (err) {
+      console.error(err);
+      setError(true);
+    }
   };
 
   useEffect(() => {
     fetchData();
-    fetchHistory();
   }, []);
 
+  // Countdown logic
   useEffect(() => {
     if (!countdown) return;
 
-    const i = setInterval(() => {
-      setCountdown((p) => {
-        if (p <= 1) {
+    const interval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
           fetchData();
-          fetchHistory();
           return 0;
         }
-        return p - 1;
+        return prev - 1;
       });
     }, 1000);
 
-    return () => clearInterval(i);
+    return () => clearInterval(interval);
   }, [countdown]);
+
+  if (error) {
+    return <div className="center text-red-500">Backend offline</div>;
+  }
+
+  if (!data) {
+    return <div className="center">Loading...</div>;
+  }
+
+  const assets = Object.values(data);
 
   return (
     <div className="container">
       <h1>📊 Trading Dashboard</h1>
 
-      <div>
-        Last Sync:{" "}
-        {meta?.last_fetch
-          ? new Date(meta.last_fetch).toLocaleString()
-          : "-"}{" "}
-        | Refresh in: {countdown}s
+      {/* HEADER */}
+      <div className="flex justify-between items-center mb-4 text-sm text-gray-400">
+        <div>
+          Last Sync:{" "}
+          {meta?.last_fetch
+            ? new Date(meta.last_fetch).toLocaleString()
+            : "—"}
+        </div>
+
+        <div>Refresh in: {countdown}s</div>
       </div>
 
-      {data &&
-        Object.values(data).map((a: any, i) => (
-          <div key={i} className="card">
-            <h2>{a.symbol}</h2>
-            <div>{a.signal}</div>
+      {assets.map((asset: any, index: number) => {
+        const hasTrade = asset.signal !== "NO TRADE";
 
-            <div>Confidence: {a.confidence}%</div>
-            <div>Trend: {a.trend}</div>
+        return (
+          <div className="card" key={index}>
+            <h2>{asset.symbol}</h2>
 
-            {a.signal !== "NO TRADE" && (
+            <SignalBadge signal={asset.signal} />
+
+            {/* NEW FIELDS */}
+            <Row
+              label="Confidence"
+              value={
+                asset.confidence !== undefined
+                  ? `${asset.confidence}%`
+                  : "-"
+              }
+            />
+            <Row label="Trend" value={asset.trend ?? "-"} />
+
+            {hasTrade && (
               <>
-                <div>Entry: {a.entry}</div>
-                <div>SL: {a.stop_loss}</div>
-                <div>TP: {a.take_profit}</div>
+                <Row label="Entry" value={asset.entry} />
+                <Row label="Stop Loss" value={asset.stop_loss} />
+                <Row label="Take Profit" value={asset.take_profit} />
               </>
             )}
 
-            <div>RSI: {a.rsi}</div>
-            <div>ATR: {a.atr}</div>
+            <Row label="RSI" value={asset.rsi} />
+            <Row label="ATR" value={asset.atr} />
+            <Row label="EMA50" value={asset.ema50} />
+            <Row label="EMA200" value={asset.ema200} />
           </div>
-        ))}
+        );
+      })}
+    </div>
+  );
+}
 
-      <h2>📜 Trade History</h2>
+function Row({ label, value }: any) {
+  return (
+    <div className="row">
+      <span>{label}</span>
+      <span>{value ?? "-"}</span>
+    </div>
+  );
+}
 
-      <div>
-        <input type="date" onChange={(e) => setStart(e.target.value)} />
-        <input type="date" onChange={(e) => setEnd(e.target.value)} />
-        <button onClick={fetchHistory}>Filter</button>
-      </div>
+function SignalBadge({ signal }: any) {
+  let color = "#666";
 
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Symbol</th>
-            <th>Signal</th>
-            <th>Entry</th>
-            <th>SL</th>
-            <th>TP</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {history.map((t, i) => (
-            <tr key={i}>
-              <td>{new Date(t.timestamp).toLocaleString()}</td>
-              <td>{t.symbol}</td>
-              <td>{t.signal}</td>
-              <td>{t.entry}</td>
-              <td>{t.stop_loss}</td>
-              <td>{t.take_profit}</td>
-              <td>{t.status}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+  if (signal.includes("STRONG BUY")) color = "darkgreen";
+  else if (signal.includes("BUY")) color = "green";
+  else if (signal.includes("STRONG SELL")) color = "darkred";
+  else if (signal.includes("SELL")) color = "red";
+  else if (signal.includes("WEAK")) color = "orange";
+
+  return (
+    <div style={{ background: color }} className="badge">
+      {signal}
     </div>
   );
 }
