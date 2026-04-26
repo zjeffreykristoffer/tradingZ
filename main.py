@@ -14,7 +14,7 @@ app = FastAPI()
 # ======================
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://trading-z.vercel.app"],
     allow_credentials=False,
     allow_methods=["GET"],
     allow_headers=["*"],
@@ -27,26 +27,21 @@ API_KEY = os.getenv("TWELVE_DATA_KEY")
 
 TIMEFRAME = "15min"
 HTF_TIMEFRAME = "1h"
+
 SYNC_INTERVAL = 900
 CACHE_TTL = 300
-
-# ======================
-# TRADE STORE
-# ======================
-TRADE_HISTORY = []
-MAX_HISTORY = 500
 
 # ======================
 # SYMBOL CONFIG
 # ======================
 SYMBOL_CONFIG = {
-    "DEFAULT": {"pip": 0.0001, "atr_multiplier_tp": 2.0},
-    "JPY": {"pip": 0.01, "atr_multiplier_tp": 2.0},
-    "XAU": {"pip": 0.1, "atr_multiplier_tp": 2.5},
+    "DEFAULT": {"pip": 0.0001, "atr_multiplier_sl": 1.2, "atr_multiplier_tp": 2.0, "min_atr_pips": 2},
+    "JPY": {"pip": 0.01, "atr_multiplier_sl": 1.2, "atr_multiplier_tp": 2.0, "min_atr_pips": 2},
+    "XAU": {"pip": 0.1, "atr_multiplier_sl": 1.5, "atr_multiplier_tp": 2.5, "min_atr_pips": 15},
 }
 
 
-def get_symbol_config(symbol):
+def get_symbol_config(symbol: str):
     if "XAU" in symbol:
         return SYMBOL_CONFIG["XAU"]
     if "JPY" in symbol:
@@ -67,18 +62,23 @@ def get_prices(symbol, interval):
     if key in cache and now - cache[key]["time"] < CACHE_TTL:
         return cache[key]["data"]
 
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize=300&apikey={API_KEY}"
-    r = httpx.get(url, timeout=10).json()
+    try:
+        url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize=300&apikey={API_KEY}"
+        r = httpx.get(url, timeout=10).json()
 
-    if "values" not in r:
+        if "values" not in r:
+            return None
+
+        closes = [float(x["close"]) for x in r["values"]][::-1]
+        highs = [float(x["high"]) for x in r["values"]][::-1]
+        lows = [float(x["low"]) for x in r["values"]][::-1]
+
+        cache[key] = {"data": (closes, highs, lows), "time": now}
+        return closes, highs, lows
+
+    except Exception as e:
+        print(e)
         return None
-
-    closes = [float(x["close"]) for x in r["values"]][::-1]
-    highs = [float(x["high"]) for x in r["values"]][::-1]
-    lows = [float(x["low"]) for x in r["values"]][::-1]
-
-    cache[key] = {"data": (closes, highs, lows), "time": now}
-    return closes, highs, lows
 
 
 # ======================
@@ -93,6 +93,9 @@ def ema(data, period):
 
 
 def rsi(data, period=14):
+    if len(data) < period + 1:
+        return [50] * len(data)
+
     gains, losses = [], []
     for i in range(1, len(data)):
         diff = data[i] - data[i - 1]
@@ -101,11 +104,15 @@ def rsi(data, period=14):
 
     avg_gain = sum(gains[:period]) / period
     avg_loss = sum(losses[:period]) / period
-
     rsis = []
+
     for i in range(period, len(data)):
         rs = avg_gain / (avg_loss + 1e-9)
         rsis.append(100 - (100 / (1 + rs)))
+
+        if i < len(data) - 1:
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
 
     return [50] * period + rsis
 
@@ -120,7 +127,14 @@ def atr(high, low, close, period=14):
         )
         trs.append(tr)
 
-    return sum(trs[-period:]) / period if len(trs) >= period else sum(trs) / len(trs)
+    if len(trs) < period:
+        return sum(trs) / len(trs) if trs else 0
+
+    smoothed = sum(trs[:period]) / period
+    for tr in trs[period:]:
+        smoothed = (smoothed * (period - 1) + tr) / period
+
+    return smoothed
 
 
 def bollinger(data, period=20):
@@ -140,9 +154,6 @@ def score_trade(closes, highs, lows):
     vol = atr(highs, lows, closes)
 
     price = closes[-2]
-    high = highs[-2]
-    low = lows[-2]
-
     upper, mid, lower = bollinger(closes)
     rsi_val = rsi_vals[-2]
 
@@ -153,12 +164,23 @@ def score_trade(closes, highs, lows):
         rsi_bias = 1
     elif rsi_val > 70:
         rsi_bias = -1
+    elif rsi_val < 45:
+        rsi_bias = 0.5
+    elif rsi_val > 55:
+        rsi_bias = -0.5
     else:
         rsi_bias = 0
 
-    # BB bias
-    pos = (price - lower) / (upper - lower) if upper != lower else 0.5
-    bb_bias = 1 if pos < 0.3 else (-1 if pos > 0.7 else 0)
+    # Bollinger bias
+    band_range = upper - lower if upper != lower else 1
+    pos = (price - lower) / band_range
+
+    if pos < 0.3:
+        bb_bias = 1
+    elif pos > 0.7:
+        bb_bias = -1
+    else:
+        bb_bias = 0
 
     return {
         "trend": trend,
@@ -168,46 +190,8 @@ def score_trade(closes, highs, lows):
         "ema50": ema50[-2],
         "ema200": ema200[-2],
         "price": price,
-        "high": high,
-        "low": low,
         "atr": vol,
     }
-
-
-# ======================
-# TRADE LOGIC
-# ======================
-def log_trade(symbol, signal, entry, sl, tp):
-    if "BUY" not in signal and "SELL" not in signal:
-        return
-
-    TRADE_HISTORY.append({
-        "symbol": symbol,
-        "signal": signal,
-        "entry": entry,
-        "stop_loss": sl,
-        "take_profit": tp,
-        "status": "OPEN",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    })
-
-
-def evaluate_trades(symbol, high, low):
-    for t in TRADE_HISTORY:
-        if t["symbol"] != symbol or t["status"] != "OPEN":
-            continue
-
-        if "BUY" in t["signal"]:
-            if high >= t["take_profit"]:
-                t["status"] = "WIN"
-            elif low <= t["stop_loss"]:
-                t["status"] = "LOSS"
-
-        elif "SELL" in t["signal"]:
-            if low <= t["take_profit"]:
-                t["status"] = "WIN"
-            elif high >= t["stop_loss"]:
-                t["status"] = "LOSS"
 
 
 # ======================
@@ -215,21 +199,34 @@ def evaluate_trades(symbol, high, low):
 # ======================
 def process(symbol):
     data = get_prices(symbol, TIMEFRAME)
-    if not data:
+    htf = get_prices(symbol, HTF_TIMEFRAME)
+
+    if not data or not htf:
         return {"symbol": symbol, "signal": "NO DATA"}
 
     closes, highs, lows = data
+    htf_closes, _, _ = htf
 
     d = score_trade(closes, highs, lows)
 
-    # Evaluate existing trades
-    evaluate_trades(symbol, d["high"], d["low"])
-
     trend = d["trend"]
 
-    confidence = 50 + trend * 20 + d["rsi_bias"] * 15 + d["bb_bias"] * 15
+    # CONFIDENCE
+    confidence = 50
+    confidence += trend * 20
+    confidence += d["rsi_bias"] * 15
+    confidence += d["bb_bias"] * 15
+
+    # HTF influence
+    htf_ema50 = ema(htf_closes, 50)
+    htf_ema200 = ema(htf_closes, 200)
+    htf_trend = 1 if htf_ema50[-2] > htf_ema200[-2] else -1
+
+    confidence += 10 if trend == htf_trend else -10
+
     confidence = max(0, min(100, confidence))
 
+    # SIGNAL
     if confidence >= 75:
         signal = "STRONG BUY" if trend == 1 else "STRONG SELL"
     elif confidence >= 60:
@@ -239,25 +236,28 @@ def process(symbol):
     else:
         signal = "NO TRADE"
 
+    trend_label = "BULLISH" if trend == 1 else "BEARISH"
+
+    # SL/TP
+    cfg = get_symbol_config(symbol)
     entry = d["price"]
 
     if "BUY" in signal:
         sl = min(lows[-5:])
-        tp = entry + (entry - sl) * 2
+        risk = entry - sl
+        tp = entry + risk * cfg["atr_multiplier_tp"]
     elif "SELL" in signal:
         sl = max(highs[-5:])
-        tp = entry - (sl - entry) * 2
+        risk = sl - entry
+        tp = entry - risk * cfg["atr_multiplier_tp"]
     else:
         sl = tp = None
-
-    # Log trade AFTER evaluation
-    log_trade(symbol, signal, entry, sl, tp)
 
     return {
         "symbol": symbol,
         "signal": signal,
         "confidence": round(confidence, 2),
-        "trend": "BULLISH" if trend == 1 else "BEARISH",
+        "trend": trend_label,
         "entry": round(entry, 5),
         "stop_loss": round(sl, 5) if sl else None,
         "take_profit": round(tp, 5) if tp else None,
@@ -285,15 +285,3 @@ def dashboard():
             "next_sync": SYNC_INTERVAL,
         },
     }
-
-
-@app.get("/history")
-def history(start: str = None, end: str = None):
-    data = TRADE_HISTORY
-
-    if start:
-        data = [t for t in data if t["timestamp"] >= start]
-    if end:
-        data = [t for t in data if t["timestamp"] <= end]
-
-    return {"data": data}
