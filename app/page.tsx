@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 
 export default function Home() {
   const [data, setData] = useState<any>(null);
+  const [meta, setMeta] = useState<any>(null);        // ✅ NEW
+  const [countdown, setCountdown] = useState(0);      // ✅ NEW
   const [error, setError] = useState(false);
 
   const API_URL = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/all`;
@@ -15,7 +17,11 @@ export default function Home() {
       if (!res.ok) throw new Error("API error");
 
       const json = await res.json();
-      setData(json);
+
+      setData(json.data);                 // ✅ UPDATED
+      setMeta(json.meta);                 // ✅ NEW
+      setCountdown(json.meta.next_sync);  // ✅ NEW
+
       setError(false);
     } catch (err) {
       console.error(err);
@@ -25,9 +31,24 @@ export default function Home() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 15000);
-    return () => clearInterval(interval);
   }, []);
+
+  // ✅ NEW countdown logic (replaces old interval)
+  useEffect(() => {
+    if (!countdown) return;
+
+    const interval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          fetchData();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [countdown]);
 
   if (error) {
     return <div className="center text-red-500">Backend offline</div>;
@@ -37,12 +58,26 @@ export default function Home() {
     return <div className="center">Loading...</div>;
   }
 
-  // ✅ Convert all pairs into array
+  // ✅ UPDATED (data is now inside json.data)
   const assets = Object.values(data);
 
   return (
     <div className="container">
       <h1>📊 Trading Dashboard</h1>
+
+      {/* ✅ NEW HEADER */}
+      <div className="flex justify-between items-center mb-4 text-sm text-gray-400">
+        <div>
+          Last Sync:{" "}
+          {meta?.last_fetch
+            ? new Date(meta.last_fetch).toLocaleString()
+            : "—"}
+        </div>
+
+        <div>
+          Refresh in: {countdown}s
+        </div>
+      </div>
 
       {assets.map((asset: any, index: number) => {
         const hasTrade = asset.signal !== "NO TRADE";
@@ -53,7 +88,6 @@ export default function Home() {
 
             <SignalBadge signal={asset.signal} />
 
-            {/* ✅ Show for ALL trades except NO TRADE */}
             {hasTrade && (
               <>
                 <Row label="Entry" value={asset.entry} />
