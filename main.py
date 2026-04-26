@@ -27,20 +27,39 @@ app.add_middleware(
 # ======================
 API_KEY = os.getenv("TWELVE_DATA_KEY")
 
+TIMEFRAME = "15min"
+HTF_TIMEFRAME = "1h"
+
+SYNC_INTERVAL = 900  # 15 minutes (aligned with candle)
+
+CACHE_TTL = 300
+CACHE_MAX_ENTRIES = 50
+
 # ======================
 # TRADE FILTER CONFIG
 # ======================
-MIN_PIP_MOVE = 3
-MIN_ATR = 0.0005
-MAX_SPREAD = 0.0002
-SYNC_INTERVAL = 120
+def get_min_pip_move(symbol: str):
+    if "XAU" in symbol:
+        return 50  # gold
+    return 10  # forex
+
+
+def get_pip_value(symbol: str):
+    if "JPY" in symbol:
+        return 0.01
+    elif "XAU" in symbol:
+        return 0.1
+    return 0.0001
+
+
+def estimate_spread(pip_value: float):
+    return pip_value * 1.5  # realistic default spread
+
 
 # ======================
 # CACHE
 # ======================
 cache = {}
-CACHE_TTL = 120
-CACHE_MAX_ENTRIES = 50
 
 
 def _evict_cache():
@@ -53,11 +72,11 @@ def _evict_cache():
 # ======================
 # DATA FETCH
 # ======================
-def fetch_prices(symbol: str):
+def fetch_prices(symbol: str, interval: str):
     try:
         url = (
             f"https://api.twelvedata.com/time_series"
-            f"?symbol={symbol}&interval=15min&outputsize=300&apikey={API_KEY}"
+            f"?symbol={symbol}&interval={interval}&outputsize=300&apikey={API_KEY}"
         )
         with httpx.Client(timeout=10) as client:
             r = client.get(url).json()
@@ -66,8 +85,8 @@ def fetch_prices(symbol: str):
             return None
 
         closes = [float(x["close"]) for x in r["values"]][::-1]
-        highs  = [float(x["high"])  for x in r["values"]][::-1]
-        lows   = [float(x["low"])   for x in r["values"]][::-1]
+        highs = [float(x["high"]) for x in r["values"]][::-1]
+        lows = [float(x["low"]) for x in r["values"]][::-1]
 
         return closes, highs, lows
 
@@ -76,40 +95,20 @@ def fetch_prices(symbol: str):
         return None
 
 
-def get_prices(symbol: str):
+def get_prices(symbol: str, interval: str):
+    key = f"{symbol}_{interval}"
     now = time()
 
-    if symbol in cache and now - cache[symbol]["time"] < CACHE_TTL:
-        return cache[symbol]["data"]
+    if key in cache and now - cache[key]["time"] < CACHE_TTL:
+        return cache[key]["data"]
 
-    data = fetch_prices(symbol)
+    data = fetch_prices(symbol, interval)
 
     if data:
         _evict_cache()
-        cache[symbol] = {"data": data, "time": now}
+        cache[key] = {"data": data, "time": now}
 
     return data
-
-
-# ======================
-# HELPERS (NEW)
-# ======================
-def get_pip_value(symbol: str):
-    if "JPY" in symbol:
-        return 0.01
-    elif "XAU" in symbol:
-        return 0.1
-    return 0.0001
-
-
-def estimate_spread(highs: list, lows: list):
-    return (highs[-1] - lows[-1]) * 0.1
-
-
-def higher_tf_trend(closes: list):
-    ema50 = ema(closes, 50)
-    ema200 = ema(closes, 200)
-    return "LONG" if ema50[-1] > ema200[-1] else "SHORT"
 
 
 # ======================
@@ -157,10 +156,8 @@ def atr(high: list, low: list, close: list, period: int = 14) -> float:
         )
         trs.append(tr)
 
-    if not trs:
-        return 0.0
     if len(trs) < period:
-        return sum(trs) / len(trs)
+        return sum(trs) / len(trs) if trs else 0
 
     smoothed = sum(trs[:period]) / period
     for tr in trs[period:]:
@@ -179,110 +176,112 @@ def bollinger(data: list, period: int = 20):
 
 
 # ======================
-# SCORING ENGINE (UNCHANGED)
+# SCORING ENGINE (IMPROVED)
 # ======================
-def score_trade(closes: list, highs: list, lows: list) -> tuple:
-    ema50    = ema(closes, 50)
-    ema200   = ema(closes, 200)
+def score_trade(closes, highs, lows):
+    ema50 = ema(closes, 50)
+    ema200 = ema(closes, 200)
     rsi_vals = rsi(closes)
-    vol      = atr(highs, lows, closes)
+    vol = atr(highs, lows, closes)
 
-    price = closes[-1]
+    price = closes[-2]  # CLOSED CANDLE
     upper, mid, lower = bollinger(closes)
-    rsi_val = rsi_vals[-1]
+    rsi_val = rsi_vals[-2]
 
-    score_long  = 0
+    score_long = 0
     score_short = 0
 
-    if ema50[-1] > ema200[-1]:
-        score_long += 35
+    # Trend (reduced dominance)
+    if ema50[-2] > ema200[-2]:
+        score_long += 25
     else:
-        score_short += 35
+        score_short += 25
 
+    # RSI
     if rsi_val < 30:
         score_long += 25
     elif rsi_val > 70:
         score_short += 25
     elif rsi_val < 40:
-        score_long += 12
+        score_long += 10
     elif rsi_val > 60:
-        score_short += 12
+        score_short += 10
 
-    band_range = upper - lower
-    if band_range > 0:
-        position = (price - lower) / band_range
+    # Bollinger + RSI combo
+    if price <= lower and rsi_val < 35:
+        score_long += 20
+    elif price >= upper and rsi_val > 65:
+        score_short += 20
 
-        if price <= lower:
-            score_long += 25
-        elif price >= upper:
-            score_short += 25
-        elif position < 0.35:
-            score_long += 15
-        elif position > 0.65:
-            score_short += 15
-
-    return score_long, score_short, ema50, ema200, rsi_val, vol, price, mid
+    return score_long, score_short, vol, price
 
 
 # ======================
-# PROCESS (UPDATED WITH FILTERS)
+# PROCESS
 # ======================
-def process(symbol: str) -> dict:
-    data = get_prices(symbol)
+def process(symbol: str):
+    data = get_prices(symbol, TIMEFRAME)
+    htf_data = get_prices(symbol, HTF_TIMEFRAME)
 
-    if not data:
+    if not data or not htf_data:
         return {"symbol": symbol, "signal": "NO_DATA"}
 
     closes, highs, lows = data
+    htf_closes, _, _ = htf_data
 
-    if len(closes) < 60:
+    if len(closes) < 60 or len(htf_closes) < 200:
         return {"symbol": symbol, "signal": "INSUFFICIENT_DATA"}
 
-    long_score, short_score, ema50, ema200, rsi_val, vol, price, mid = score_trade(
-        closes, highs, lows
-    )
+    long_score, short_score, vol, price = score_trade(closes, highs, lows)
 
-    dominant_score = max(long_score, short_score)
-    direction      = "LONG" if long_score > short_score else "SHORT"
-    gap            = abs(long_score - short_score)
+    # Higher TF trend
+    htf_ema50 = ema(htf_closes, 50)
+    htf_ema200 = ema(htf_closes, 200)
+    higher_tf = "LONG" if htf_ema50[-2] > htf_ema200[-2] else "SHORT"
+
+    direction = "LONG" if long_score > short_score else "SHORT"
+    gap = abs(long_score - short_score)
+    dominant = max(long_score, short_score)
 
     signal = "NO TRADE"
 
-    if dominant_score >= 50 and gap >= 10:
-        if dominant_score >= 85:
+    if dominant >= 60 and gap >= 10:
+        if dominant >= 80:
             signal = "STRONG BUY" if direction == "LONG" else "STRONG SELL"
-        elif dominant_score >= 70:
-            signal = "BUY" if direction == "LONG" else "SELL"
         else:
-            signal = "WEAK BUY" if direction == "LONG" else "WEAK SELL"
+            signal = "BUY" if direction == "LONG" else "SELL"
 
+    # ======================
+    # SL / TP (STRUCTURE + ATR)
+    # ======================
     entry = price
 
     if "BUY" in signal:
-        sl = entry - vol * 1.5
-        tp = entry + vol * 3.0
+        sl = min(lows[-5:])
+        risk = entry - sl
+        tp = entry + risk * 2
     elif "SELL" in signal:
-        sl = entry + vol * 1.5
-        tp = entry - vol * 3.0
+        sl = max(highs[-5:])
+        risk = sl - entry
+        tp = entry - risk * 2
     else:
-        sl = None
-        tp = None
+        sl = tp = None
 
     # ======================
-    # FILTERS (NEW)
+    # FILTERS
     # ======================
     pip_value = get_pip_value(symbol)
-    projected_move = abs(tp - entry) if tp else 0
-    projected_pips = projected_move / pip_value if pip_value else 0
-    spread = estimate_spread(highs, lows)
-    higher_tf = higher_tf_trend(closes)
+    min_move = get_min_pip_move(symbol)
+
+    spread = estimate_spread(pip_value)
+    projected_pips = abs(tp - entry) / pip_value if tp else 0
 
     if signal != "NO TRADE":
-        if projected_pips < MIN_PIP_MOVE:
+        if projected_pips < min_move:
             signal = "NO TRADE"
-        elif vol < MIN_ATR:
+        elif vol < pip_value * 5:
             signal = "NO TRADE"
-        elif spread >= MAX_SPREAD:
+        elif spread > pip_value * 3:
             signal = "NO TRADE"
         elif ("BUY" in signal and higher_tf != "LONG") or \
              ("SELL" in signal and higher_tf != "SHORT"):
@@ -297,15 +296,13 @@ def process(symbol: str) -> dict:
         "entry": round(entry, 5),
         "stop_loss": round(sl, 5) if sl else None,
         "take_profit": round(tp, 5) if tp else None,
-        "rsi": round(rsi_val, 2),
+        "rsi": None,
         "atr": round(vol, 5),
-        "ema50": round(ema50[-1], 5),
-        "ema200": round(ema200[-1], 5),
     }
 
 
 # ======================
-# API (UPDATED RESPONSE)
+# API
 # ======================
 @app.get("/dashboard/all")
 def dashboard_all():
@@ -327,7 +324,7 @@ def dashboard_all():
 def home():
     return {
         "status": "running",
-        "model": "institutional hybrid scoring system",
-        "timeframe": "15m",
-        "strategy": "trend + momentum + volatility with conflict resolution",
+        "model": "improved institutional hybrid",
+        "timeframe": "15m + 1H confirmation",
+        "notes": "closed candle, real HTF, structure SL/TP, volatility & spread filters",
     }
