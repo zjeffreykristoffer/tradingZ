@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 export default function Home() {
   const [data, setData] = useState<any>(null);
   const [meta, setMeta] = useState<any>(null);
+  const [stats, setStats] = useState<any>(null);
+  const [trades, setTrades] = useState<any[]>([]);
   const [countdown, setCountdown] = useState(0);
   const [error, setError] = useState(false);
 
@@ -20,7 +22,10 @@ export default function Home() {
 
       setData(json.data);
       setMeta(json.meta);
-      setCountdown(json.meta.next_sync);
+      setStats(json.stats);
+      setTrades(json.trades);
+
+      setCountdown(json.meta?.next_sync || 0);
 
       setError(false);
     } catch (err) {
@@ -76,6 +81,43 @@ export default function Home() {
         <div>Refresh in: {countdown}s</div>
       </div>
 
+      {/* 📈 STATS */}
+      <div className="card">
+        <h2>📈 Performance</h2>
+        <Row label="Wins" value={stats?.wins} />
+        <Row label="Losses" value={stats?.losses} />
+        <Row label="Total Trades" value={stats?.total} />
+        <Row label="Winrate" value={`${stats?.winrate ?? 0}%`} />
+      </div>
+
+      {/* 🧾 TRADE LOG */}
+      <div className="card">
+        <h2>🧾 Recent Trades</h2>
+
+        {trades?.length === 0 && <div>No trades yet</div>}
+
+        {trades?.map((t: any, i: number) => (
+          <div key={i} className="row">
+            <span>
+              {t.symbol} {t.direction}
+            </span>
+            <span
+              style={{
+                color:
+                  t.status === "WIN"
+                    ? "limegreen"
+                    : t.status === "LOSS"
+                    ? "red"
+                    : "orange",
+              }}
+            >
+              {t.status}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* 📊 ASSETS */}
       {assets.map((asset: any, index: number) => {
         const hasTrade = asset.signal !== "NO TRADE";
 
@@ -85,22 +127,12 @@ export default function Home() {
 
             <SignalBadge signal={asset.signal} />
 
-            {/* NEW FIELDS */}
-            <Row
-              label="Confidence"
-              value={
-                asset.confidence !== undefined
-                  ? `${asset.confidence}%`
-                  : "-"
-              }
-            />
-            <Row label="Trend" value={asset.trend ?? "-"} />
-
             {hasTrade && (
               <>
                 <Row label="Entry" value={asset.entry} />
                 <Row label="Stop Loss" value={asset.stop_loss} />
                 <Row label="Take Profit" value={asset.take_profit} />
+                <Row label="R:R" value={asset.risk_reward} />
               </>
             )}
 
