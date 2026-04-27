@@ -193,7 +193,12 @@ def calculate_lot_size(risk_usd: float, entry: float, sl: float, cfg: dict) -> f
 def build_signal(long_score: int, short_score: int) -> tuple[str, float]:
     """
     Returns (signal_label, confidence_percent).
-    confidence = dominant_score / MAX_SCORE * 100
+
+    Tier thresholds:
+      STRONG  — dominant ≥ 60 and gap ≥ 15  (clear, decisive trend)
+      BUY/SELL — dominant ≥ 50 and gap ≥ 8  (moderate conviction)
+      WEAK    — dominant ≥ 45 and gap ≥ 5   (marginal, use caution)
+      NO TRADE — anything below
     """
     dominant  = max(long_score, short_score)
     gap       = abs(long_score - short_score)
@@ -201,18 +206,14 @@ def build_signal(long_score: int, short_score: int) -> tuple[str, float]:
 
     confidence = round((dominant / MAX_SCORE) * 100, 1)
 
-    signal = "NO TRADE"
-    if dominant >= 50 and gap >= 8:
-        if dominant >= 60:
-            signal = f"STRONG {direction}"
-        elif dominant >= 50:
-            signal = direction
-        else:
-            signal = f"WEAK {direction}"
-
-    # Extra weak tier for marginal gaps
-    if signal == "NO TRADE" and dominant >= 45 and gap >= 5:
+    if dominant >= 60 and gap >= 15:
+        signal = f"STRONG {direction}"
+    elif dominant >= 50 and gap >= 8:
+        signal = direction
+    elif dominant >= 45 and gap >= 5:
         signal = f"WEAK {direction}"
+    else:
+        signal = "NO TRADE"
 
     return signal, confidence
 
@@ -321,8 +322,8 @@ def process(symbol: str) -> dict:
 # ======================
 SYMBOLS = {
     "NZDUSD": "NZD/USD",
-    "EURUSD": "EUR/USD",
     "GOLD":   "XAU/USD",
+    "EURUSD": "EUR/USD",
 }
 
 @app.get("/dashboard/all")
