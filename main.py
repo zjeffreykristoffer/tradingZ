@@ -28,8 +28,10 @@ API_KEY = os.getenv("TWELVE_DATA_KEY")
 TIMEFRAME     = "15min"
 HTF_TIMEFRAME = "1h"
 
-SYNC_INTERVAL  = 900
-CACHE_TTL      = 900   # align with SYNC_INTERVAL so prices never refresh mid-window
+TIMEFRAME_MINUTES = 15   # minutes per LTF candle — used in holding-time maths
+
+SYNC_INTERVAL  = 300
+CACHE_TTL      = 300   # align with SYNC_INTERVAL so prices never refresh mid-window
 
 # Tracks the last time a real data sync occurred so the frontend
 # receives the *remaining* countdown, not always the full interval.
@@ -171,6 +173,58 @@ def macd(data: list) -> float:
     return macd_line[-1] - signal[-1]
 
 # ======================
+# HOLDING TIME ESTIMATOR
+# ======================
+# Methodology
+# -----------
+# The ATR (Average True Range) measures how far price moves on a *single candle*
+# on average. If the distance from entry to TP is D and the ATR per bar is V, the
+# naive estimate is D/V bars. Converting to minutes: bars × TIMEFRAME_MINUTES.
+#
+# Real markets don't trend in a straight line, so we apply empirical multipliers:
+#   - Optimistic  : 0.7 × naïve  (strong trend, almost every bar moves toward TP)
+#   - Base        : 1.8 × naïve  (typical drift / pullbacks along the way)
+#   - Pessimistic : 4.0 × naïve  (choppy market, lots of consolidation)
+#
+# Rounding to the nearest 15 minutes keeps the numbers clean.
+
+_HOLD_OPT  = 0.7
+_HOLD_BASE = 1.8
+_HOLD_PESS = 4.0
+_ROUND_MIN = 15   # snap estimates to 15-minute grid
+
+
+def _snap(minutes: float) -> int:
+    """Round to the nearest TIMEFRAME_MINUTES grid, minimum 1 interval."""
+    snapped = round(minutes / _ROUND_MIN) * _ROUND_MIN
+    return max(snapped, _ROUND_MIN)
+
+
+def estimate_holding_time(
+    entry: float,
+    take_profit: float,
+    atr_per_bar: float,
+    timeframe_minutes: int = TIMEFRAME_MINUTES,
+) -> dict:
+    """
+    Return optimistic / base / pessimistic holding-time estimates in minutes.
+
+    Returns None values when a valid TP / ATR is not available.
+    """
+    if take_profit is None or atr_per_bar <= 0:
+        return {"holding_time_opt": None, "holding_time_base": None, "holding_time_pess": None}
+
+    tp_distance  = abs(take_profit - entry)
+    naive_bars   = tp_distance / atr_per_bar          # expected bars to TP
+    naive_mins   = naive_bars * timeframe_minutes
+
+    return {
+        "holding_time_opt":  _snap(naive_mins * _HOLD_OPT),
+        "holding_time_base": _snap(naive_mins * _HOLD_BASE),
+        "holding_time_pess": _snap(naive_mins * _HOLD_PESS),
+    }
+
+# ======================
 # LOT SIZE CALCULATOR
 # ======================
 def calculate_lot_size(risk_usd: float, entry: float, sl: float, cfg: dict) -> float:
@@ -227,14 +281,17 @@ def process(symbol: str) -> dict:
 
     if not data or not htf:
         return {
-            "symbol":         symbol,
-            "recommendation": "NO DATA",
-            "confidence":     0.0,
-            "entry":          None,
-            "stop_loss":      None,
-            "take_profit":    None,
-            "lot_size":       None,
-            "risk_usd":       None,
+            "symbol":              symbol,
+            "recommendation":      "NO DATA",
+            "confidence":          0.0,
+            "entry":               None,
+            "stop_loss":           None,
+            "take_profit":         None,
+            "lot_size":            None,
+            "risk_usd":            None,
+            "holding_time_opt":    None,
+            "holding_time_base":   None,
+            "holding_time_pess":   None,
         }
 
     closes, highs, lows = data
@@ -294,7 +351,7 @@ def process(symbol: str) -> dict:
 
     # ── SL / TP ──────────────────────────────────────────────
     effective_atr = max(vol, cfg["min_atr_pips"] * cfg["pip"])
-    sl = tp = rr = None
+    sl = tp = None
 
     if "BUY" in signal:
         sl = round(price - effective_atr * cfg["sl_mult"], 5)
@@ -307,15 +364,21 @@ def process(symbol: str) -> dict:
     risk_usd = get_risk_usd()
     lot_size = calculate_lot_size(risk_usd, price, sl, cfg) if sl is not None else None
 
+    # ── Holding time ─────────────────────────────────────────
+    hold = estimate_holding_time(price, tp, effective_atr)
+
     return {
-        "symbol":         symbol,
-        "recommendation": signal,
-        "confidence":     confidence,
-        "entry":          round(price, 5),
-        "stop_loss":      sl,
-        "take_profit":    tp,
-        "lot_size":       lot_size,
-        "risk_usd":       risk_usd,
+        "symbol":            symbol,
+        "recommendation":    signal,
+        "confidence":        confidence,
+        "entry":             round(price, 5),
+        "stop_loss":         sl,
+        "take_profit":       tp,
+        "lot_size":          lot_size,
+        "risk_usd":          risk_usd,
+        "holding_time_opt":  hold["holding_time_opt"],
+        "holding_time_base": hold["holding_time_base"],
+        "holding_time_pess": hold["holding_time_pess"],
     }
 
 # ======================
