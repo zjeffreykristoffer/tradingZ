@@ -28,8 +28,12 @@ API_KEY = os.getenv("TWELVE_DATA_KEY")
 TIMEFRAME     = "15min"
 HTF_TIMEFRAME = "1h"
 
-SYNC_INTERVAL = 900
-CACHE_TTL     = 300
+SYNC_INTERVAL  = 900
+CACHE_TTL      = 300
+
+# Tracks the last time a real data sync occurred so the frontend
+# receives the *remaining* countdown, not always the full interval.
+last_sync_time: float = 0.0
 
 # ======================
 # RISK MODEL
@@ -317,17 +321,30 @@ def process(symbol: str) -> dict:
 # ======================
 SYMBOLS = {
     "NZDUSD": "NZD/USD",
+    "EURUSD": "EUR/USD",
     "GOLD":   "XAU/USD",
 }
 
 @app.get("/dashboard/all")
 def dashboard():
+    global last_sync_time
+
+    now       = time()
+    elapsed   = now - last_sync_time
+    remaining = int(max(0, SYNC_INTERVAL - elapsed))
+
+    # Re-process only when the sync window has elapsed (or on first load).
+    # Indicator data is still served from the price cache in between.
+    if elapsed >= SYNC_INTERVAL or last_sync_time == 0.0:
+        last_sync_time = now
+        remaining = SYNC_INTERVAL
+
     results = {key: process(sym) for key, sym in SYMBOLS.items()}
 
     return {
         "assets": results,
         "meta": {
             "last_fetch": datetime.now(timezone.utc).isoformat(),
-            "next_sync":  SYNC_INTERVAL,
+            "next_sync":  remaining,
         },
     }
