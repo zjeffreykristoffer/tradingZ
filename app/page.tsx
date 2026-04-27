@@ -12,6 +12,9 @@ interface Asset {
   take_profit: number | null;
   lot_size: number | null;
   risk_usd: number | null;
+  holding_time_opt: number | null;   // minutes
+  holding_time_base: number | null;  // minutes
+  holding_time_pess: number | null;  // minutes
 }
 
 interface ApiResponse {
@@ -36,6 +39,19 @@ function fmt(val: number | null, decimals = 5): string {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
+}
+
+/**
+ * Convert minutes into a compact human-readable string.
+ * Examples: 15 → "15m", 75 → "1h 15m", 180 → "3h"
+ */
+function fmtMinutes(mins: number | null): string {
+  if (mins === null || mins === undefined) return "—";
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h === 0)  return `${m}m`;
+  if (m === 0)  return `${h}h`;
+  return `${h}h ${m}m`;
 }
 
 // ─── Confidence bar ──────────────────────────────────────────────────────────
@@ -95,9 +111,140 @@ function DataRow({ label, value, accent }: { label: string; value: string; accen
   );
 }
 
+// ─── Holding time range bar ──────────────────────────────────────────────────
+/**
+ * Visual timeline showing optimistic → base → pessimistic estimates.
+ *
+ * Layout (proportional):
+ *   [opt]──────[base]──────────────[pess]
+ *     ↑                               ↑
+ *   fast exit                    slow exit
+ *
+ * The bar is scaled so pess always maps to 100% width.
+ * A filled region covers 0 → opt (fast zone).
+ * A dashed region covers opt → pess.
+ * The base estimate is marked with a tick.
+ */
+function HoldingTimeBar({
+  opt,
+  base,
+  pess,
+  color,
+}: {
+  opt: number | null;
+  base: number | null;
+  pess: number | null;
+  color: string;
+}) {
+  const [animated, setAnimated] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setAnimated(true), 200);
+    return () => clearTimeout(t);
+  }, []);
+
+  if (opt === null || base === null || pess === null) {
+    return (
+      <div style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: "0.75rem", padding: "0.4rem 0" }}>—</div>
+    );
+  }
+
+  const optPct  = (opt  / pess) * 100;
+  const basePct = (base / pess) * 100;
+
+  return (
+    <div style={{ marginBottom: "0.2rem" }}>
+      {/* Labels row */}
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        marginBottom: "0.5rem",
+        alignItems: "flex-end",
+      }}>
+        {/* Left: optimistic */}
+        <div style={{ textAlign: "left" }}>
+          <div style={{ fontFamily: "var(--font-label)", fontSize: "0.55rem", letterSpacing: "0.1em", color: "var(--muted)", textTransform: "uppercase", marginBottom: "0.15rem" }}>
+            Best case
+          </div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: "#69f0ae", fontWeight: 600 }}>
+            {fmtMinutes(opt)}
+          </div>
+        </div>
+
+        {/* Centre: base */}
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontFamily: "var(--font-label)", fontSize: "0.55rem", letterSpacing: "0.1em", color: "var(--muted)", textTransform: "uppercase", marginBottom: "0.15rem" }}>
+            Est. hold
+          </div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.95rem", color, fontWeight: 700 }}>
+            {fmtMinutes(base)}
+          </div>
+        </div>
+
+        {/* Right: pessimistic */}
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontFamily: "var(--font-label)", fontSize: "0.55rem", letterSpacing: "0.1em", color: "var(--muted)", textTransform: "uppercase", marginBottom: "0.15rem" }}>
+            Worst case
+          </div>
+          <div style={{ fontFamily: "var(--font-mono)", fontSize: "0.78rem", color: "#ff6d6d", fontWeight: 600 }}>
+            {fmtMinutes(pess)}
+          </div>
+        </div>
+      </div>
+
+      {/* Track */}
+      <div style={{
+        position: "relative",
+        height: "4px",
+        background: "var(--track)",
+        borderRadius: "3px",
+        overflow: "visible",
+      }}>
+        {/* Fast-zone fill (0 → opt) */}
+        <div style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          height: "100%",
+          width: animated ? `${optPct}%` : "0%",
+          background: `linear-gradient(90deg, #69f0ae, ${color})`,
+          borderRadius: "3px",
+          transition: "width 1s cubic-bezier(0.22, 1, 0.36, 1)",
+        }} />
+
+        {/* Dashed zone (opt → pess) — rendered as a low-opacity fill */}
+        <div style={{
+          position: "absolute",
+          left: `${optPct}%`,
+          top: 0,
+          height: "100%",
+          width: animated ? `${100 - optPct}%` : "0%",
+          background: `repeating-linear-gradient(90deg, ${color}50 0px, ${color}50 4px, transparent 4px, transparent 8px)`,
+          borderRadius: "0 3px 3px 0",
+          transition: "width 1s cubic-bezier(0.22, 1, 0.36, 1) 0.1s",
+        }} />
+
+        {/* Base tick marker */}
+        <div style={{
+          position: "absolute",
+          left: `${basePct}%`,
+          top: "-4px",
+          transform: "translateX(-50%)",
+          width: "2px",
+          height: "12px",
+          background: color,
+          boxShadow: `0 0 6px ${color}`,
+          borderRadius: "1px",
+          opacity: animated ? 1 : 0,
+          transition: "opacity 0.5s ease 0.8s",
+        }} />
+      </div>
+    </div>
+  );
+}
+
 // ─── Asset card ──────────────────────────────────────────────────────────────
 function AssetCard({ asset }: { asset: Asset }) {
-  const sig   = signalMeta(asset.recommendation);
+  const sig     = signalMeta(asset.recommendation);
   const noTrade = asset.entry === null;
 
   return (
@@ -138,13 +285,22 @@ function AssetCard({ asset }: { asset: Asset }) {
       {!noTrade ? (
         <>
           <SectionLabel>Trade Parameters</SectionLabel>
-          <DataRow label="Entry"  value={fmt(asset.entry)} />
-          <DataRow label="Stop Loss"    value={fmt(asset.stop_loss)}   accent="#ff6d6d" />
-          <DataRow label="Target"  value={fmt(asset.take_profit)} accent="#69f0ae" />
+          <DataRow label="Entry"     value={fmt(asset.entry)} />
+          <DataRow label="Stop Loss" value={fmt(asset.stop_loss)}   accent="#ff6d6d" />
+          <DataRow label="Target"    value={fmt(asset.take_profit)} accent="#69f0ae" />
 
           <SectionLabel style={{ marginTop: "1rem" }}>Risk Management</SectionLabel>
           <DataRow label="Lot Size" value={asset.lot_size !== null ? `${asset.lot_size} lots` : "—"} />
-          <DataRow label="Risk"   value={asset.risk_usd !== null ? `$${asset.risk_usd.toFixed(2)}` : "—"} accent="#ffcc02" />
+          <DataRow label="Risk"     value={asset.risk_usd !== null ? `$${asset.risk_usd.toFixed(2)}` : "—"} accent="#ffcc02" />
+
+          {/* Holding time section */}
+          <SectionLabel style={{ marginTop: "1rem", marginBottom: "0.6rem" }}>Estimated Holding Time</SectionLabel>
+          <HoldingTimeBar
+            opt={asset.holding_time_opt}
+            base={asset.holding_time_base}
+            pess={asset.holding_time_pess}
+            color={sig.color}
+          />
         </>
       ) : (
         <div style={{ color: "var(--muted)", fontFamily: "var(--font-label)", fontSize: "0.7rem", letterSpacing: "0.1em", textAlign: "center", padding: "1rem 0" }}>
@@ -174,7 +330,7 @@ function SectionLabel({ children, style }: { children: React.ReactNode; style?: 
 
 // ─── Countdown ring ──────────────────────────────────────────────────────────
 function CountdownRing({ seconds, total }: { seconds: number; total: number }) {
-  const r   = 10;
+  const r    = 10;
   const circ = 2 * Math.PI * r;
   const pct  = seconds / total;
   const dash = circ * pct;
@@ -197,18 +353,18 @@ function CountdownRing({ seconds, total }: { seconds: number; total: number }) {
 
 // ─── Main page ───────────────────────────────────────────────────────────────
 export default function Home() {
-  const [assets, setAssets]     = useState<Asset[]>([]);
+  const [assets, setAssets]       = useState<Asset[]>([]);
   const [lastFetch, setLastFetch] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(0);
-  const [syncTotal, setSyncTotal] = useState(900);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState(false);
+  const [syncTotal, setSyncTotal] = useState(300);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState(false);
 
   const API_URL = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/all`;
 
   const fetchData = async () => {
     try {
-      const res  = await fetch(API_URL, { cache: "no-store" });
+      const res = await fetch(API_URL, { cache: "no-store" });
       if (!res.ok) throw new Error("API error");
 
       const json: ApiResponse = await res.json();
@@ -266,7 +422,6 @@ export default function Home() {
           color: var(--text);
           min-height: 100vh;
           font-family: var(--font-label);
-          /* subtle grid pattern */
           background-image:
             linear-gradient(rgba(255,255,255,0.012) 1px, transparent 1px),
             linear-gradient(90deg, rgba(255,255,255,0.012) 1px, transparent 1px);
