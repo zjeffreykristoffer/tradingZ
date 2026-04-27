@@ -29,11 +29,12 @@ TIMEFRAME     = "15min"
 HTF_TIMEFRAME = "1h"
 
 SYNC_INTERVAL  = 900
-CACHE_TTL      = 300
+CACHE_TTL      = 900   # align with SYNC_INTERVAL so prices never refresh mid-window
 
 # Tracks the last time a real data sync occurred so the frontend
 # receives the *remaining* countdown, not always the full interval.
 last_sync_time: float = 0.0
+cached_results: dict  = {}   # holds last computed signals until next sync
 
 # ======================
 # RISK MODEL
@@ -322,30 +323,30 @@ def process(symbol: str) -> dict:
 # ======================
 SYMBOLS = {
     "NZDUSD": "NZD/USD",
-    "GOLD":   "XAU/USD",
     "EURUSD": "EUR/USD",
+    "GOLD":   "XAU/USD",
 }
 
 @app.get("/dashboard/all")
 def dashboard():
-    global last_sync_time
+    global last_sync_time, cached_results
 
     now       = time()
     elapsed   = now - last_sync_time
     remaining = int(max(0, SYNC_INTERVAL - elapsed))
 
-    # Re-process only when the sync window has elapsed (or on first load).
-    # Indicator data is still served from the price cache in between.
+    # Only recompute signals when the 15-minute window has elapsed or on
+    # first load. Any page refresh in between returns the same cached signals
+    # so the recommendation never changes mid-window.
     if elapsed >= SYNC_INTERVAL or last_sync_time == 0.0:
+        cached_results = {key: process(sym) for key, sym in SYMBOLS.items()}
         last_sync_time = now
-        remaining = SYNC_INTERVAL
-
-    results = {key: process(sym) for key, sym in SYMBOLS.items()}
+        remaining      = SYNC_INTERVAL
 
     return {
-        "assets": results,
+        "assets": cached_results,
         "meta": {
-            "last_fetch": datetime.now(timezone.utc).isoformat(),
+            "last_fetch": datetime.fromtimestamp(last_sync_time, tz=timezone.utc).isoformat(),
             "next_sync":  remaining,
         },
     }
