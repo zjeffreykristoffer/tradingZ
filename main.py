@@ -69,8 +69,9 @@ SYMBOL_CONFIG = {
 }
 
 # Maximum score achievable – used to normalise confidence.
-# Sources: EMA trend 25, HTF trend 10, RSI 15, MACD 8, Bollinger 10 → total 68
-MAX_SCORE = 68.0
+# Sources: LTF EMA 20, Price vs EMA50 10, HTF EMA 20, RSI 15, MACD 10, Bollinger 10 → total 85
+# MACD crossover bonus (+5) can push a side above 85 but confidence is capped at 100%.
+MAX_SCORE = 85.0
 
 def get_symbol_config(symbol: str) -> dict:
     if "XAU" in symbol:
@@ -165,12 +166,18 @@ def bollinger(data: list, period: int = 20):
     return mean + 2 * std, mean, mean - 2 * std
 
 
-def macd(data: list) -> float:
+def macd(data: list) -> tuple[float, float]:
+    """
+    Returns (histogram, macd_line).
+    Returning both values allows the caller to detect crossovers by comparing
+    the current histogram sign against the previous bar's histogram sign.
+    """
     ema12      = ema(data, 12)
     ema26      = ema(data, 26)
     macd_line  = [a - b for a, b in zip(ema12, ema26)]
     signal     = ema(macd_line, 9)
-    return macd_line[-1] - signal[-1]
+    hist       = macd_line[-1] - signal[-1]
+    return hist, macd_line[-1]
 
 # ======================
 # HOLDING TIME ESTIMATOR
@@ -249,10 +256,10 @@ def build_signal(long_score: int, short_score: int) -> tuple[str, float]:
     """
     Returns (signal_label, confidence_percent).
 
-    Tier thresholds:
-      STRONG  — dominant ≥ 60 and gap ≥ 15  (clear, decisive trend)
-      BUY/SELL — dominant ≥ 50 and gap ≥ 8  (moderate conviction)
-      WEAK    — dominant ≥ 45 and gap ≥ 5   (marginal, use caution)
+    Tier thresholds (tuned for MAX_SCORE = 85):
+      STRONG  — dominant ≥ 70 and gap ≥ 18  (clear, decisive trend)
+      BUY/SELL — dominant ≥ 55 and gap ≥ 10 (moderate conviction)
+      WEAK    — dominant ≥ 48 and gap ≥ 6   (marginal, use caution)
       NO TRADE — anything below
     """
     dominant  = max(long_score, short_score)
@@ -261,11 +268,11 @@ def build_signal(long_score: int, short_score: int) -> tuple[str, float]:
 
     confidence = round((dominant / MAX_SCORE) * 100, 1)
 
-    if dominant >= 60 and gap >= 15:
+    if dominant >= 70 and gap >= 18:
         signal = f"STRONG {direction}"
-    elif dominant >= 50 and gap >= 8:
+    elif dominant >= 55 and gap >= 10:
         signal = direction
-    elif dominant >= 45 and gap >= 5:
+    elif dominant >= 48 and gap >= 6:
         signal = f"WEAK {direction}"
     else:
         signal = "NO TRADE"
@@ -305,49 +312,112 @@ def process(symbol: str) -> dict:
     ema200_vals = ema(closes, 200)
     r           = rsi(closes)[-2]
     vol         = atr(highs, lows, closes)
-    _upper, mid, _lower = bollinger(closes)
-    macd_hist   = macd(closes)
+    upper, mid, lower = bollinger(closes)
+    macd_hist, macd_line_val = macd(closes)
+
+    # MACD crossover: compare current histogram sign vs previous completed bar.
+    # A sign flip on the histogram means the MACD line just crossed the signal line.
+    prev_macd_hist, _ = macd(closes[:-1])
+    macd_crossed = (macd_hist > 0) != (prev_macd_hist > 0)
 
     htf_ema50  = ema(htf_closes, 50)
     htf_ema200 = ema(htf_closes, 200)
 
+    # ── Trend context flags ────────────────────────────────
+    ltf_uptrend = ema50_vals[-2] > ema200_vals[-2]
+    htf_uptrend = htf_ema50[-2]  > htf_ema200[-2]
+
     # ── Scoring ──────────────────────────────────────────────
     long_score = short_score = 0
 
-    # LTF EMA trend (25 pts)
-    if ema50_vals[-2] > ema200_vals[-2]:
-        long_score  += 25
+    # 1. LTF EMA trend (20 pts)
+    #    Is the 50 EMA above the 200 EMA on the traded timeframe?
+    if ltf_uptrend:
+        long_score  += 20
     else:
-        short_score += 25
+        short_score += 20
 
-    # HTF EMA trend (10 pts)
-    if htf_ema50[-2] > htf_ema200[-2]:
+    # 2. Price position vs EMA50 (10 pts)
+    #    Is price on the correct side of the trend line right now?
+    if price > ema50_vals[-2]:
         long_score  += 10
     else:
         short_score += 10
 
-    # RSI (15 pts)
-    if 45 <= r <= 60:
-        long_score  += 10
-        short_score += 10
+    # 3. HTF EMA trend (20 pts)
+    #    Higher-timeframe bias. Boosted from the original 10 pts because
+    #    trading against the HTF trend is the most common cause of false signals.
+    if htf_uptrend:
+        long_score  += 20
+    else:
+        short_score += 20
+
+    # 4. RSI (15 pts)
+    #    Standard oversold / overbought levels (30/70) with a graduated
+    #    mid-zone. The old 45/60 thresholds were too tight and added noise.
+    if r < 35:
+        long_score  += 15          # deeply oversold — strong buy pressure
     elif r < 45:
-        long_score  += 15
+        long_score  += 10          # recovering from oversold
+    elif r <= 55:
+        long_score  += 5           # neutral — no strong conviction either way
+        short_score += 5
+    elif r <= 65:
+        short_score += 10          # weakening from overbought
     else:
-        short_score += 15
+        short_score += 15          # deeply overbought — strong sell pressure
 
-    # MACD histogram (8 pts)
+    # 5. MACD histogram + crossover bonus (10 pts + 5 bonus)
+    #    Base points for histogram direction; bonus awarded on a fresh
+    #    signal-line crossover, which is a higher-conviction entry trigger.
     if macd_hist > 0:
-        long_score  += 8
-    else:
-        short_score += 8
-
-    # Bollinger mid (10 pts)
-    if price < mid:
         long_score  += 10
+        if macd_crossed:
+            long_score  += 5       # fresh bullish crossover
     else:
         short_score += 10
+        if macd_crossed:
+            short_score += 5       # fresh bearish crossover
+
+    # 6. Bollinger Bands — trend-aware (10 pts)
+    #    The old logic (price < mid → always long) contradicted the EMA trend
+    #    in downtrends. The new logic scores relative to the trend direction:
+    #
+    #    Uptrend  : near lower band = dip-buy entry (10 pts)
+    #               above midline  = trend continuation (7 pts)
+    #               otherwise      = weak lean (3 pts)
+    #    Downtrend: near upper band = rally-sell entry (10 pts)
+    #               below midline  = trend continuation (7 pts)
+    #               otherwise      = weak lean (3 pts)
+    band_range = upper - lower
+    near_lower = price < (lower + band_range * 0.25)
+    near_upper = price > (upper - band_range * 0.25)
+
+    if ltf_uptrend:
+        if near_lower:
+            long_score  += 10
+        elif price > mid:
+            long_score  += 7
+        else:
+            long_score  += 3
+    else:
+        if near_upper:
+            short_score += 10
+        elif price < mid:
+            short_score += 7
+        else:
+            short_score += 3
+
+    # ── HTF conflict filter ────────────────────────────────
+    # When LTF and HTF trends disagree, cap any non-weak signal down to WEAK
+    # and reduce confidence by 25%. Avoid trading against the higher timeframe.
+    htf_ltf_agree = (ltf_uptrend == htf_uptrend)
 
     signal, confidence = build_signal(long_score, short_score)
+
+    if not htf_ltf_agree and signal in ("STRONG BUY", "BUY", "STRONG SELL", "SELL"):
+        signal     = "WEAK " + ("BUY" if "BUY" in signal else "SELL")
+        confidence = round(confidence * 0.75, 1)
 
     # ── SL / TP ──────────────────────────────────────────────
     effective_atr = max(vol, cfg["min_atr_pips"] * cfg["pip"])
