@@ -1,10 +1,12 @@
 import os
+import json
 import math
 from time import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -33,34 +35,90 @@ TIMEFRAME_MINUTES = 15   # minutes per LTF candle — used in holding-time maths
 SYNC_INTERVAL  = 300
 CACHE_TTL      = 300   # align with SYNC_INTERVAL so prices never refresh mid-window
 
-# Tracks the last time a real data sync occurred so the frontend
-# receives the *remaining* countdown, not always the full interval.
 last_sync_time: float = 0.0
-cached_results: dict  = {}   # holds last computed signals until next sync
+cached_results: dict  = {}
+
+# ======================
+# TRADE LOG
+# Persisted to disk so history survives restarts.
+# Only actionable signals (BUY / SELL variants) are recorded.
+# ======================
+TRADE_LOG_FILE  = Path(os.getenv("TRADE_LOG_FILE", "trade_log.json"))
+MAX_LOG_ENTRIES = int(os.getenv("MAX_LOG_ENTRIES", "1000"))
+
+def _load_log() -> list:
+    """Load trade log from disk, return empty list on any failure."""
+    try:
+        if TRADE_LOG_FILE.exists():
+            with TRADE_LOG_FILE.open("r") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+    except Exception:
+        pass
+    return []
+
+def _save_log(log: list) -> None:
+    """Persist trade log to disk. Silently ignores write errors."""
+    try:
+        with TRADE_LOG_FILE.open("w") as f:
+            json.dump(log, f, separators=(",", ":"))
+    except Exception:
+        pass
+
+# In-memory log — loaded once at startup.
+trade_log: list = _load_log()
+_log_id_counter: int = max((e.get("id", 0) for e in trade_log), default=0)
+
+def _append_trade(result: dict) -> None:
+    """
+    Append a result dict to the trade log if it carries an actionable signal.
+    Skips NO TRADE, NO DATA, and any result without entry / SL / TP.
+    """
+    global _log_id_counter
+
+    rec = result.get("recommendation", "")
+    if "BUY" not in rec and "SELL" not in rec:
+        return
+    if result.get("entry") is None:
+        return
+
+    _log_id_counter += 1
+    entry = {
+        "id":             _log_id_counter,
+        "timestamp":      datetime.now(tz=timezone.utc).isoformat(),
+        "symbol":         result["symbol"],
+        "recommendation": rec,
+        "confidence":     result["confidence"],
+        "entry":          result["entry"],
+        "stop_loss":      result["stop_loss"],
+        "take_profit":    result["take_profit"],
+        "lot_size":       result["lot_size"],
+        "risk_usd":       result["risk_usd"],
+    }
+
+    trade_log.append(entry)
+
+    # Trim to cap — keep the most recent entries.
+    if len(trade_log) > MAX_LOG_ENTRIES:
+        del trade_log[: len(trade_log) - MAX_LOG_ENTRIES]
+
+    _save_log(trade_log)
 
 # ======================
 # RISK MODEL
-# Use RISK_MODE="fixed" for a flat dollar amount, or "percent" for % of balance.
 # ======================
-ACCOUNT_BALANCE = float(os.getenv("ACCOUNT_BALANCE", "10000"))   # USD
-RISK_MODE       = os.getenv("RISK_MODE", "percent")               # "fixed" | "percent"
-RISK_AMOUNT     = float(os.getenv("RISK_AMOUNT", "100"))          # used when RISK_MODE=fixed
-RISK_PERCENT    = float(os.getenv("RISK_PERCENT", "1.0"))         # used when RISK_MODE=percent (e.g. 1 = 1%)
+ACCOUNT_BALANCE = float(os.getenv("ACCOUNT_BALANCE", "10000"))
+RISK_MODE       = os.getenv("RISK_MODE", "percent")        # "fixed" | "percent"
+RISK_AMOUNT     = float(os.getenv("RISK_AMOUNT", "100"))
+RISK_PERCENT    = float(os.getenv("RISK_PERCENT", "1.0"))
 
 def get_risk_usd() -> float:
-    """Return the dollar amount risked per trade."""
     if RISK_MODE == "percent":
         return round(ACCOUNT_BALANCE * RISK_PERCENT / 100, 2)
     return RISK_AMOUNT
 
 # ======================
 # SYMBOL CONFIG
-# pip        – minimum price increment used for SL/TP sizing
-# pip_value  – USD value of 1 pip for 1 standard lot
-#              NZDUSD : 100 000 units × 0.0001 = $10 / pip / lot
-#              XAUUSD : 100 oz     × $0.10   = $10 / pip / lot
-#              JPYUSD  : approx $9 at ¥110 – use 9.09 as a reasonable constant
-# sl_mult / tp_mult – ATR multipliers for stop-loss and take-profit
 # ======================
 SYMBOL_CONFIG = {
     "DEFAULT": {"pip": 0.0001, "pip_value": 10.0, "sl_mult": 1.5, "tp_mult": 2.2, "min_atr_pips": 5},
@@ -182,27 +240,13 @@ def macd(data: list) -> tuple[float, float]:
 # ======================
 # HOLDING TIME ESTIMATOR
 # ======================
-# Methodology
-# -----------
-# The ATR (Average True Range) measures how far price moves on a *single candle*
-# on average. If the distance from entry to TP is D and the ATR per bar is V, the
-# naive estimate is D/V bars. Converting to minutes: bars × TIMEFRAME_MINUTES.
-#
-# Real markets don't trend in a straight line, so we apply empirical multipliers:
-#   - Optimistic  : 0.7 × naïve  (strong trend, almost every bar moves toward TP)
-#   - Base        : 1.8 × naïve  (typical drift / pullbacks along the way)
-#   - Pessimistic : 4.0 × naïve  (choppy market, lots of consolidation)
-#
-# Rounding to the nearest 15 minutes keeps the numbers clean.
-
 _HOLD_OPT  = 0.7
 _HOLD_BASE = 1.8
 _HOLD_PESS = 4.0
-_ROUND_MIN = 15   # snap estimates to 15-minute grid
+_ROUND_MIN = 15
 
 
 def _snap(minutes: float) -> int:
-    """Round to the nearest TIMEFRAME_MINUTES grid, minimum 1 interval."""
     snapped = round(minutes / _ROUND_MIN) * _ROUND_MIN
     return max(snapped, _ROUND_MIN)
 
@@ -213,17 +257,12 @@ def estimate_holding_time(
     atr_per_bar: float,
     timeframe_minutes: int = TIMEFRAME_MINUTES,
 ) -> dict:
-    """
-    Return optimistic / base / pessimistic holding-time estimates in minutes.
-
-    Returns None values when a valid TP / ATR is not available.
-    """
     if take_profit is None or atr_per_bar <= 0:
         return {"holding_time_opt": None, "holding_time_base": None, "holding_time_pess": None}
 
-    tp_distance  = abs(take_profit - entry)
-    naive_bars   = tp_distance / atr_per_bar          # expected bars to TP
-    naive_mins   = naive_bars * timeframe_minutes
+    tp_distance = abs(take_profit - entry)
+    naive_bars  = tp_distance / atr_per_bar
+    naive_mins  = naive_bars * timeframe_minutes
 
     return {
         "holding_time_opt":  _snap(naive_mins * _HOLD_OPT),
@@ -235,16 +274,9 @@ def estimate_holding_time(
 # LOT SIZE CALCULATOR
 # ======================
 def calculate_lot_size(risk_usd: float, entry: float, sl: float, cfg: dict) -> float:
-    """
-    Lot Size = Risk ($) / (SL distance in pips × pip value per 1 lot)
-
-    Returns lot size rounded to 2 decimal places.
-    Returns 0.0 if SL distance is zero or negative.
-    """
     sl_distance_price = abs(entry - sl)
     if sl_distance_price <= 0:
         return 0.0
-
     sl_distance_pips = sl_distance_price / cfg["pip"]
     lot_size         = risk_usd / (sl_distance_pips * cfg["pip_value"])
     return round(lot_size, 2)
@@ -257,9 +289,9 @@ def build_signal(long_score: int, short_score: int) -> tuple[str, float]:
     Returns (signal_label, confidence_percent).
 
     Tier thresholds (tuned for MAX_SCORE = 85):
-      STRONG  — dominant ≥ 70 and gap ≥ 18  (clear, decisive trend)
-      BUY/SELL — dominant ≥ 55 and gap ≥ 10 (moderate conviction)
-      WEAK    — dominant ≥ 48 and gap ≥ 6   (marginal, use caution)
+      STRONG  — dominant ≥ 70 and gap ≥ 18
+      BUY/SELL — dominant ≥ 55 and gap ≥ 10
+      WEAK    — dominant ≥ 48 and gap ≥ 6
       NO TRADE — anything below
     """
     dominant  = max(long_score, short_score)
@@ -316,7 +348,6 @@ def process(symbol: str) -> dict:
     macd_hist, macd_line_val = macd(closes)
 
     # MACD crossover: compare current histogram sign vs previous completed bar.
-    # A sign flip on the histogram means the MACD line just crossed the signal line.
     prev_macd_hist, _ = macd(closes[:-1])
     macd_crossed = (macd_hist > 0) != (prev_macd_hist > 0)
 
@@ -331,64 +362,47 @@ def process(symbol: str) -> dict:
     long_score = short_score = 0
 
     # 1. LTF EMA trend (20 pts)
-    #    Is the 50 EMA above the 200 EMA on the traded timeframe?
     if ltf_uptrend:
         long_score  += 20
     else:
         short_score += 20
 
     # 2. Price position vs EMA50 (10 pts)
-    #    Is price on the correct side of the trend line right now?
     if price > ema50_vals[-2]:
         long_score  += 10
     else:
         short_score += 10
 
     # 3. HTF EMA trend (20 pts)
-    #    Higher-timeframe bias. Boosted from the original 10 pts because
-    #    trading against the HTF trend is the most common cause of false signals.
     if htf_uptrend:
         long_score  += 20
     else:
         short_score += 20
 
-    # 4. RSI (15 pts)
-    #    Standard oversold / overbought levels (30/70) with a graduated
-    #    mid-zone. The old 45/60 thresholds were too tight and added noise.
+    # 4. RSI (15 pts) — standard oversold/overbought thresholds
     if r < 35:
-        long_score  += 15          # deeply oversold — strong buy pressure
+        long_score  += 15
     elif r < 45:
-        long_score  += 10          # recovering from oversold
+        long_score  += 10
     elif r <= 55:
-        long_score  += 5           # neutral — no strong conviction either way
+        long_score  += 5
         short_score += 5
     elif r <= 65:
-        short_score += 10          # weakening from overbought
+        short_score += 10
     else:
-        short_score += 15          # deeply overbought — strong sell pressure
+        short_score += 15
 
     # 5. MACD histogram + crossover bonus (10 pts + 5 bonus)
-    #    Base points for histogram direction; bonus awarded on a fresh
-    #    signal-line crossover, which is a higher-conviction entry trigger.
     if macd_hist > 0:
         long_score  += 10
         if macd_crossed:
-            long_score  += 5       # fresh bullish crossover
+            long_score  += 5
     else:
         short_score += 10
         if macd_crossed:
-            short_score += 5       # fresh bearish crossover
+            short_score += 5
 
     # 6. Bollinger Bands — trend-aware (10 pts)
-    #    The old logic (price < mid → always long) contradicted the EMA trend
-    #    in downtrends. The new logic scores relative to the trend direction:
-    #
-    #    Uptrend  : near lower band = dip-buy entry (10 pts)
-    #               above midline  = trend continuation (7 pts)
-    #               otherwise      = weak lean (3 pts)
-    #    Downtrend: near upper band = rally-sell entry (10 pts)
-    #               below midline  = trend continuation (7 pts)
-    #               otherwise      = weak lean (3 pts)
     band_range = upper - lower
     near_lower = price < (lower + band_range * 0.25)
     near_upper = price > (upper - band_range * 0.25)
@@ -409,8 +423,6 @@ def process(symbol: str) -> dict:
             short_score += 3
 
     # ── HTF conflict filter ────────────────────────────────
-    # When LTF and HTF trends disagree, cap any non-weak signal down to WEAK
-    # and reduce confidence by 25%. Avoid trading against the higher timeframe.
     htf_ltf_agree = (ltf_uptrend == htf_uptrend)
 
     signal, confidence = build_signal(long_score, short_score)
@@ -468,13 +480,14 @@ def dashboard():
     elapsed   = now - last_sync_time
     remaining = int(max(0, SYNC_INTERVAL - elapsed))
 
-    # Only recompute signals when the 15-minute window has elapsed or on
-    # first load. Any page refresh in between returns the same cached signals
-    # so the recommendation never changes mid-window.
     if elapsed >= SYNC_INTERVAL or last_sync_time == 0.0:
         cached_results = {key: process(sym) for key, sym in SYMBOLS.items()}
         last_sync_time = now
         remaining      = SYNC_INTERVAL
+
+        # Log every actionable signal produced by this sync.
+        for result in cached_results.values():
+            _append_trade(result)
 
     return {
         "assets": cached_results,
@@ -483,3 +496,37 @@ def dashboard():
             "next_sync":  remaining,
         },
     }
+
+
+@app.get("/dashboard/reports")
+def reports(
+    limit:  int = Query(default=100, ge=1, le=1000, description="Max entries to return"),
+    symbol: str = Query(default="",  description="Filter by symbol key, e.g. EURUSD"),
+):
+    """
+    Return logged trade recommendations in reverse-chronological order.
+
+    Query params:
+      limit  — how many records to return (default 100, max 1000)
+      symbol — optional symbol filter (case-insensitive)
+    """
+    filtered = list(reversed(trade_log))
+
+    if symbol:
+        sym_upper = symbol.upper()
+        filtered  = [e for e in filtered if e.get("symbol", "").upper() == sym_upper]
+
+    return {
+        "total":   len(filtered),
+        "entries": filtered[:limit],
+    }
+
+
+@app.delete("/dashboard/reports")
+def clear_reports():
+    """Wipe the trade log (useful for testing)."""
+    global trade_log, _log_id_counter
+    trade_log       = []
+    _log_id_counter = 0
+    _save_log(trade_log)
+    return {"status": "cleared"}
